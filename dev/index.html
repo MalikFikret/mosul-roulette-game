@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Roulette engine - dev hot-seat</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <h1>Roulette engine - dev hot-seat</h1>
+    <p>
+      Debugging tool only (not the game UI). One person plays every seat. It imports the engine from
+      <code>../src/engine/index.js</code>, so it must be served over HTTP: run <code>node dev/serve.js</code> in the
+      project root and open <code>http://localhost:8080/dev/</code>.
+    </p>
+
+    <fieldset>
+      <legend>New match</legend>
+      <label>Mode
+        <select id="mode">
+          <option value="classic">classic</option>
+          <option value="custom">custom</option>
+        </select>
+      </label>
+      <label>Players <input id="count" type="number" min="3" max="15" value="4" /></label>
+      <label>Seed <input id="seed" type="text" value="1" size="10" /></label>
+      <label><input id="confirm" type="checkbox" /> players confirm shots</label>
+      <br />
+      <label>
+        Extra config (JSON, merged over the defaults; "custom" holds the Custom-mode settings):<br />
+        <textarea id="config" rows="3" cols="80">{}</textarea>
+      </label>
+      <br />
+      <button id="start">Start match</button>
+      <span id="setupError"></span>
+    </fieldset>
+
+    <div id="game" hidden>
+      <p>
+        <label>View as
+          <select id="viewer"></select>
+        </label>
+        <button id="timeout">Timer ran out (timeout)</button>
+        <!-- "remove from match" (host action) is in the last column of the table. -->
+        <button id="random">Random legal action</button>
+        <button id="auto">Auto-play to the end</button>
+      </p>
+      <p id="status"></p>
+      <p id="lastError"></p>
+
+      <h2>Table</h2>
+      <table id="players" border="1" cellpadding="4"></table>
+
+      <h2>Actions</h2>
+      <div id="actions"></div>
+      <p>
+        <label>
+          Raw action (JSON):
+          <input id="raw" type="text" size="70" value='{"type":"timeout"}' />
+        </label>
+        <button id="sendRaw">Send</button>
+      </p>
+
+      <h2 id="jsonTitle">State</h2>
+      <details>
+        <summary>show JSON</summary>
+        <pre id="json"></pre>
+      </details>
+
+      <h2>Session points for this match</h2>
+      <pre id="score"></pre>
+
+      <h2 id="logTitle">Events</h2>
+      <pre id="log"></pre>
+    </div>
+
+    <script type="module">
+      import {
+        createMatch,
+        applyAction,
+        viewFor,
+        eventsFor,
+        listLegalActions,
+        scoreMatch,
+      } from '../src/engine/index.js';
+
+      const $ = (id) => document.getElementById(id);
+      const GOD = '(god view)';
+      const SPECTATOR = '(outside spectator)';
+
+      let state = null;
+      let log = []; // every event of the match, with all visibility tags
+      let lastError = '';
+
+      // Small PRNG for the "random action" buttons (the engine itself never
+      // uses Math.random; this page is free to).
+      const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+      function start() {
+        $('setupError').textContent = '';
+        let extra;
+        try {
+          extra = JSON.parse($('config').value || '{}');
+        } catch (e) {
+          $('setupError').textContent = `Config is not valid JSON: ${e.message}`;
+          return;
+        }
+        const n = Number($('count').value);
+        const players = [];
+        for (let i = 1; i <= n; i++) players.push({ id: `p${i}`, confirmShot: $('confirm').checked });
+        const seedText = $('seed').value.trim();
+        const seed = /^\d+$/.test(seedText) ? Number(seedText) : seedText;
+        const res = createMatch({ ...extra, mode: $('mode').value }, players, seed);
+        if (!res.ok) {
+          $('setupError').textContent = `${res.error.code}: ${res.error.message} ${JSON.stringify(res.error.details || '')}`;
+          return;
+        }
+        state = res.state;
+        log = res.events.slice();
+        lastError = '';
+        const viewer = $('viewer');
+        viewer.innerHTML = '';
+        for (const name of [GOD, ...state.players.map((p) => p.id), SPECTATOR]) {
+          const option = document.createElement('option');
+          option.textContent = name;
+          viewer.appendChild(option);
+        }
+        $('game').hidden = false;
+        render();
+      }
+
+      function send(action) {
+        const res = applyAction(state, action);
+        if (!res.ok) {
+          lastError = `Rejected ${JSON.stringify(action)} -> ${res.error.code}: ${res.error.message}`;
+        } else {
+          lastError = '';
+          state = res.state;
+          log.push(...res.events);
+        }
+        render();
+        return res;
+      }
+
+      // Whoever has to act for the match to move on.
+      function actor() {
+        return state.phase.type === 'loot' ? state.phase.queue[0].looter : state.turn.playerId;
+      }
+
+      const PROGRESS = ['chooseTarget', 'confirmShot', 'lootChoice', 'stealChoice', 'handSwapTarget'];
+
+      function randomAction() {
+        if (state.status !== 'active') return null;
+        const who = Math.random() < 0.7 ? actor() : pick(state.players).id;
+        const legal = listLegalActions(state, who);
+        if (legal.length === 0) return { type: 'timeout' };
+        const progress = legal.filter((a) => PROGRESS.includes(a.type));
+        return progress.length > 0 && Math.random() < 0.5 ? pick(progress) : pick(legal);
+      }
+
+      function autoPlay() {
+        let guard = 0;
+        while (state.status === 'active' && guard++ < 100000) {
+          const res = applyAction(state, randomAction());
+          if (res.ok) {
+            state = res.state;
+            log.push(...res.events);
+          }
+        }
+        render();
+      }
+
+      function label(a) {
+        switch (a.type) {
+          case 'chooseTarget':
+            return `shoot ${a.target === a.playerId ? 'SELF' : a.target}`;
+          case 'confirmShot':
+            return 'CONFIRM shot';
+          case 'cancelTarget':
+            return 'cancel aim';
+          case 'useTool':
+            return `${a.tool}${a.target ? ` -> ${a.target}` : ''}${a.targets ? ` ${a.targets.join('+')}` : ''}`;
+          case 'handSwapTarget':
+            return `swap hands with ${a.target}`;
+          case 'stealChoice':
+            return a.take === null ? 'take nothing' : `take ${a.take}, give ${a.give}`;
+          case 'lootChoice':
+            return a.choice.kind === 'tool' ? `loot ${a.choice.tool}` : `loot ${a.choice.kind}`;
+          case 'setPreference':
+            return `confirmation ${a.confirmShot ? 'on' : 'off'}`;
+          case 'buy':
+            return `${a.tool} (${state.config.custom.prices[a.tool]})`;
+          case 'transfer':
+            return `${a.amount} -> ${a.to}`;
+          case 'ransomOffer':
+            return `${a.offer.kind === 'tool' ? a.offer.tool : `${a.offer.amount} coins`} -> ${a.to}`;
+          case 'ransomWithdraw':
+            return 'withdraw offer';
+          case 'ransomAccept':
+            return `accept from ${a.from}`;
+          case 'ransomReject':
+            return `reject from ${a.from}`;
+          case 'predict':
+            return `predict ${a.prediction === null ? 'nothing' : a.prediction}`;
+          default:
+            return JSON.stringify(a);
+        }
+      }
+
+      // Action types shown open; the rest are collapsed to keep the page short.
+      const OPEN = ['chooseTarget', 'confirmShot', 'cancelTarget', 'useTool', 'handSwapTarget', 'stealChoice', 'lootChoice', 'predict'];
+
+      function renderActions(viewerName) {
+        const box = $('actions');
+        box.innerHTML = '';
+        if (state.status !== 'active') {
+          box.textContent = 'The match is over.';
+          return;
+        }
+        const who = viewerName === GOD ? state.players.map((p) => p.id) : viewerName === SPECTATOR ? [] : [viewerName];
+        if (who.length === 0) box.textContent = 'A spectator has no actions.';
+        for (const id of who) {
+          const legal = listLegalActions(state, id);
+          if (legal.length === 0) continue;
+          const row = document.createElement('div');
+          const name = document.createElement('b');
+          name.textContent = `${id}${id === actor() ? ' (to act)' : ''}: `;
+          row.appendChild(name);
+          const groups = {};
+          for (const a of legal) (groups[a.type] = groups[a.type] || []).push(a);
+          for (const type of Object.keys(groups)) {
+            const holder = OPEN.includes(type) ? document.createElement('span') : document.createElement('details');
+            if (!OPEN.includes(type)) {
+              const summary = document.createElement('summary');
+              summary.textContent = `${type} (${groups[type].length})`;
+              holder.appendChild(summary);
+            }
+            for (const a of groups[type]) {
+              const button = document.createElement('button');
+              button.textContent = label(a);
+              button.title = JSON.stringify(a);
+              button.addEventListener('click', () => send(a));
+              holder.appendChild(button);
+            }
+            row.appendChild(holder);
+          }
+          box.appendChild(row);
+        }
+      }
+
+      function renderTable(viewerName) {
+        const table = $('players');
+        table.innerHTML = '';
+        const god = viewerName === GOD;
+        const header = ['seat', 'id', 'hp', 'alive', 'jailed', 'turn'];
+        const secret = ['hand', 'coins', 'shields (shot / tool)', 'private info', 'ransom offer'];
+        const tr = document.createElement('tr');
+        for (const h of [...header, ...secret, 'host']) {
+          const th = document.createElement('th');
+          th.textContent = h;
+          tr.appendChild(th);
+        }
+        table.appendChild(tr);
+        const view = god ? null : viewFor(state, viewerName === SPECTATOR ? null : viewerName);
+        for (const p of state.players) {
+          const pub = [p.seat, p.id, p.hp, p.alive ? 'yes' : 'no', p.jailed ? 'JAILED' : '', state.turn.playerId === p.id ? '<-' : ''];
+          let priv = ['?', '?', '?', '?', '?'];
+          if (god) {
+            priv = [
+              p.hand.join(', '),
+              p.coins,
+              `${JSON.stringify(p.shields.shot)} / ${JSON.stringify(p.shields.tool)} (active when <= turn ${state.turn.number})`,
+              p.privateInfo ? `#${p.privateInfo.chamberIndex} ${p.privateInfo.type}${p.privateInfo.stale ? ' (stale)' : ''}` : '',
+              p.ransomOffer ? JSON.stringify(p.ransomOffer) : '',
+            ];
+          } else if (view.self && view.viewer === p.id) {
+            const s = view.self;
+            priv = [
+              s.hand.join(', '),
+              s.coins === null ? '' : s.coins,
+              `${JSON.stringify(s.shields.shot)} / ${JSON.stringify(s.shields.tool)}`,
+              s.privateInfo ? `#${s.privateInfo.chamberIndex} ${s.privateInfo.type}${s.privateInfo.stale ? ' (stale)' : ''}` : '',
+              s.ransomOffer ? JSON.stringify(s.ransomOffer) : '',
+            ];
+          }
+          const row = document.createElement('tr');
+          for (const cell of [...pub, ...priv]) {
+            const td = document.createElement('td');
+            td.textContent = String(cell);
+            row.appendChild(td);
+          }
+          // Host-only system action (the real host layer checks that the sender
+          // is the room host and that the target is disconnected).
+          const hostCell = document.createElement('td');
+          if (p.alive && state.status === 'active') {
+            const button = document.createElement('button');
+            button.textContent = 'remove from match';
+            button.title = JSON.stringify({ type: 'removePlayer', target: p.id });
+            button.addEventListener('click', () => send({ type: 'removePlayer', target: p.id }));
+            hostCell.appendChild(button);
+          }
+          row.appendChild(hostCell);
+          table.appendChild(row);
+        }
+      }
+
+      function render() {
+        const viewerName = $('viewer').value || GOD;
+        const god = viewerName === GOD;
+        const viewerId = viewerName === SPECTATOR ? null : viewerName;
+
+        const r = state.round;
+        let status = `Mode ${state.config.mode} | round ${r.index}: announced ${r.announced.live} live + ${r.announced.blank} blank, ${r.shots} shots fired`;
+        status += ` | direction ${state.direction === 1 ? 'forward' : 'reversed'} | phase ${JSON.stringify(god ? state.phase : viewFor(state, viewerId).phase)}`;
+        if (state.doublePending) status += ' | DOUBLE pending';
+        if (state.links.length) status += ` | links ${state.links.map((l) => l.join('+')).join(', ')}`;
+        if (state.status === 'ended') {
+          status = `MATCH OVER: ${state.result.type === 'win' ? `${state.result.winner} wins` : 'draw'} | ${status}`;
+        } else {
+          status += ` | turn ${state.turn.number}: ${state.turn.playerId} | clock #${state.clock.seq} (${state.clock.kind}, ${state.clock.playerId})`;
+        }
+        if (god) {
+          status += ` | chambers: ${r.chambers
+            .map((c, i) => `${i === r.cursor ? '[' : ''}${c.type === 'live' ? 'L' : 'B'}${c.flipped ? '~' : ''}${i === r.cursor ? ']' : ''}`)
+            .join(' ')}`;
+        }
+        if (state.config.mode === 'custom') status += ` | shop ${JSON.stringify(state.shop.stock)}`;
+        $('status').textContent = status;
+        $('lastError').textContent = lastError;
+
+        renderTable(viewerName);
+        renderActions(viewerName);
+
+        $('jsonTitle').textContent = god ? 'Full state (god view)' : `viewFor(state, ${JSON.stringify(viewerId)})`;
+        $('json').textContent = JSON.stringify(god ? state : viewFor(state, viewerId), null, 2);
+
+        const score = scoreMatch(log);
+        $('score').textContent = Object.keys(score.players)
+          .map((id) => `${id}: ${score.players[id].total}   ${JSON.stringify(score.players[id])}`)
+          .join('\n');
+
+        const visible = god ? log : eventsFor(log, viewerId);
+        $('logTitle').textContent = god ? `Events (all ${log.length}, newest first)` : `Events visible to ${viewerName} (${visible.length} of ${log.length}, newest first)`;
+        $('log').textContent = visible
+          .slice(-400)
+          .reverse()
+          .map((e) => {
+            const { type, visibility, to, ...data } = e;
+            const tag = visibility === 'public' ? 'public ' : `private to [${to.join(',')}]`;
+            return `${tag}  ${type}  ${JSON.stringify(data)}`;
+          })
+          .join('\n');
+      }
+
+      $('start').addEventListener('click', start);
+      $('viewer').addEventListener('change', render);
+      $('timeout').addEventListener('click', () => send({ type: 'timeout' }));
+      $('random').addEventListener('click', () => {
+        const a = randomAction();
+        if (a) send(a);
+      });
+      $('auto').addEventListener('click', autoPlay);
+      $('sendRaw').addEventListener('click', () => {
+        try {
+          send(JSON.parse($('raw').value));
+        } catch (e) {
+          lastError = `Raw action is not valid JSON: ${e.message}`;
+          render();
+        }
+      });
+
+      // Handy in the browser console while debugging.
+      window.dev = {
+        get state() {
+          return state;
+        },
+        get log() {
+          return log;
+        },
+        send,
+        start,
+        autoPlay,
+      };
+    </script>
+  </body>
+</html>
