@@ -6,8 +6,10 @@
 // id below. The `demo-` prefix means Firebase never touches a real project.
 
 import { readFileSync } from 'node:fs';
-import { after, before, beforeEach } from 'node:test';
+import { after, afterEach, before, beforeEach } from 'node:test';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
+import { deleteApp, initializeApp, setLogLevel } from 'firebase/app';
+import { connectDatabaseEmulator, getDatabase } from 'firebase/database';
 
 export const PROJECT_ID = 'demo-mosul-roulette';
 
@@ -16,8 +18,20 @@ const firebaseConfig = JSON.parse(readFileSync(new URL('firebase.json', root), '
 const RULES = readFileSync(new URL(firebaseConfig.database.rules, root), 'utf8');
 const { host, port } = firebaseConfig.emulators.database;
 
+// Denied writes are expected in these tests; the SDK would log a warning for each one.
+setLogLevel('error');
+
+let appCounter = 0;
+
 export function useRulesTestEnv() {
   let env = null;
+  let modularApps = [];
+
+  afterEach(async () => {
+    const apps = modularApps;
+    modularApps = [];
+    await Promise.all(apps.map((app) => deleteApp(app)));
+  });
 
   before(async () => {
     env = await initializeTestEnvironment({
@@ -48,6 +62,21 @@ export function useRulesTestEnv() {
     // A database handle as a client signed in with this uid (optional custom token claims).
     userDb(uid, claims) {
       return requireEnv().authenticatedContext(uid, claims).database();
+    },
+    // A modular-SDK `Database` (firebase/database), as the browser game will use, signed in
+    // with this uid (signed out when uid is omitted). It uses the same emulator namespace as
+    // the handles above, so the rules of database.rules.json apply. Deleted after each test.
+    modularDb(uid) {
+      requireEnv();
+      appCounter += 1;
+      const app = initializeApp(
+        { projectId: PROJECT_ID, databaseURL: `http://${host}:${port}?ns=${PROJECT_ID}` },
+        `modular-${appCounter}`,
+      );
+      modularApps.push(app);
+      const db = getDatabase(app);
+      connectDatabaseEmulator(db, host, port, uid === undefined ? {} : { mockUserToken: { sub: uid } });
+      return db;
     },
     // Runs `fn(db)` with security rules switched off, for seeding data and reading it back.
     async withRulesDisabled(fn) {
