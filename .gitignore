@@ -3,3 +3,10 @@ CLAUDE.md
 node_modules/
 .claude/
 docs/
+
+# Firebase emulator logs and caches
+firebase-debug.log
+database-debug.log
+ui-debug.log
+*-debug.log
+.firebase/

@@ -1,6 +1,12 @@
 {
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test tests/*.test.js",
+    "test:rules": "node tests-firebase/check-tools.js && firebase emulators:exec --only auth,database --project demo-mosul-roulette \"node --test --test-concurrency=1 tests-firebase/*.test.js\"",
+    "emulators": "node tests-firebase/check-tools.js && firebase emulators:start --only auth,database --project demo-mosul-roulette"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "6.0.0",
+    "firebase": "13.4.0"
   }
 }
