@@ -19,7 +19,8 @@
 // recovery moves a seat to a new device, the old device's members entry is stale and grants
 // nothing. A kicked seat is deleted together with its members entries.
 //
-//   match:    { n, seq, stateJson, log: { [seq]: eventsJson } }   members read; see match-helpers.js
+//   match:    { n, seq, stateJson, log: { [seq]: eventsJson }, clockAt }   members read; see match-helpers.js
+//   results/{n}: { scoreJson, joinedAt: { [seatId]: number } }   write-once result of match n, members read
 //
 // Seat ids are exactly s01..s15. The fixed set enforces the player limit, because security
 // rules cannot count children. Later steps add more children of rooms/{CODE} (waiting
@@ -124,6 +125,8 @@ export const paths = Object.freeze({
   metaStatus: (code) => `rooms/${code}/meta/status`,
   match: (code) => `rooms/${code}/match`,
   matchN: (code) => `rooms/${code}/match/n`,
+  results: (code) => `rooms/${code}/results`,
+  result: (code, n) => `rooms/${code}/results/${n}`,
   presence: (code) => `rooms/${code}/presence`,
   presenceSeat: (code, seatId) => `rooms/${code}/presence/${seatId}`,
   presenceConns: (code, seatId) => `rooms/${code}/presence/${seatId}/conns`,

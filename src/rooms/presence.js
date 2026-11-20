@@ -13,6 +13,7 @@
 
 import { HOST_ABSENCE_MS, chooseNewHost, isHostAbsentLongEnough, isSeatPresent } from './host.js';
 import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
+import { computeSessionScores } from './match-helpers.js';
 import { SEAT_IDS, isSeatId, paths } from './schema.js';
 
 // watchHost fires this long after the 60 s are over, plus a random jitter of up to
@@ -263,7 +264,10 @@ export function createPresenceFunctions(ctx) {
     if (!isHostAbsentLongEnough(hostEntry, joinedAt, serverNow)) return { moved: false, hostSeat, reason: 'tooEarly' };
 
     const candidates = SEAT_IDS.filter((seatId) => seatId !== hostSeat && isSeatPresent(presence[seatId]));
-    const chosen = chooseNewHost(candidates, { scores, random: pick });
+    // Without explicit scores: the room's session points (highest wins, ties random).
+    const ranking =
+      scores ?? computeSessionScores(await readMembersOnly(paths.results(roomCode)), await readMembersOnly(paths.seats(roomCode)));
+    const chosen = chooseNewHost(candidates, { scores: ranking, random: pick });
     if (chosen === null) return { moved: false, hostSeat, reason: 'noCandidate' };
 
     try {
@@ -279,7 +283,8 @@ export function createPresenceFunctions(ctx) {
 
   /**
    * Moves the host role if the host seat has been absent for more than 60 s (server time):
-   * the new host is chosen with chooseNewHost among the present seats. A refused move (the
+   * the new host is chosen with chooseNewHost among the present seats, by `scores` if given,
+   * otherwise by the room's session points (getSessionScores; all 0 before the first result). A refused move (the
    * host came back, or someone else moved the role first) is not an error.
    * @param {{ uid: string, code: string, scores?: Record<string, number>, random?: () => number }} input
    * @returns {Promise<{ moved: boolean, hostSeat: string, reason?: 'hostPresent' | 'tooEarly' | 'noCandidate' | 'refused' }>}

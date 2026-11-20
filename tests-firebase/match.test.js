@@ -7,7 +7,7 @@ import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { applyAction, eventsFor, listLegalActions, viewFor } from '../src/engine/index.js';
 import { ROOM_ERR } from '../src/rooms/index.js';
 import { useRulesTestEnv } from './helpers.js';
-import { CODE, PIN, rejectsWithCode, roomFixtures, seedPin, wait, waitFor } from './fixtures.js';
+import { CODE, NOW, PIN, rejectsWithCode, roomFixtures, seedPin, wait, waitFor } from './fixtures.js';
 
 const rt = useRulesTestEnv();
 const { roomsApi, liveRoomsApi, dumpRoom, joinUpdate, write, seedRoom } = roomFixtures(rt);
@@ -58,7 +58,7 @@ describe('startMatch', () => {
     await rejectsWithCode(live('dave').startMatch({ uid: 'dave', code: CODE }), ROOM_ERR.NOT_MEMBER);
     const raw = (n = 1) => ({
       [`rooms/${CODE}/meta/status`]: 'playing',
-      [`rooms/${CODE}/match`]: { n, seq: 0, stateJson: '{}', log: { 0: '[]' } },
+      [`rooms/${CODE}/match`]: { n, seq: 0, stateJson: '{}', log: { 0: '[]' }, clockAt: NOW },
     });
     await assertFails(write(rt.userDb('bob'), raw()), 'non-host');
     await assertFails(write(rt.userDb('dave'), raw()), 'stranger');
@@ -71,7 +71,7 @@ describe('startMatch', () => {
   test('a raw start must set status and match together, with the right n, seq 0 and log entry 0 only', async () => {
     await seedRoom(['bob', 'carol']);
     const host = rt.userDb('host');
-    const match = (m = {}) => ({ n: 1, seq: 0, stateJson: '{}', log: { 0: '[]' }, ...m });
+    const match = (m = {}) => ({ n: 1, seq: 0, stateJson: '{}', log: { 0: '[]' }, clockAt: NOW, ...m });
     await assertFails(host.ref(`rooms/${CODE}/meta/status`).set('playing'), 'status alone');
     await assertFails(host.ref(`rooms/${CODE}/match`).set(match()), 'match alone');
     const both = (m) => ({ [`rooms/${CODE}/meta/status`]: 'playing', [`rooms/${CODE}/match`]: match(m) });
@@ -207,12 +207,12 @@ describe('submitAction', () => {
     assert.equal(match.stateJson, JSON.stringify(applyAction(state, confirm).state));
   });
 
-  test('timeout and removePlayer are not allowed yet; no match, bad action and non-member are refused', async () => {
+  test('removePlayer is not allowed through submitAction; no match, bad action and non-member are refused', async () => {
     await seedRoom(['bob', 'carol']);
     const host = live('host');
     await rejectsWithCode(host.submitAction({ uid: 'host', code: CODE, action: { type: 'chooseTarget', target: 's02' } }), ROOM_ERR.NO_MATCH);
     await host.startMatch({ uid: 'host', code: CODE });
-    await rejectsWithCode(host.submitAction({ uid: 'host', code: CODE, action: { type: 'timeout', seq: 1 } }), ROOM_ERR.ACTION_NOT_ALLOWED);
+    // (Timeouts are accepted since task 3.5b: see match-end.test.js.)
     await rejectsWithCode(host.submitAction({ uid: 'host', code: CODE, action: { type: 'removePlayer', target: 's02' } }), ROOM_ERR.ACTION_NOT_ALLOWED);
     await rejectsWithCode(host.submitAction({ uid: 'host', code: CODE, action: 'fire' }), ROOM_ERR.INVALID_ACTION);
     await rejectsWithCode(live('dave').submitAction({ uid: 'dave', code: CODE, action: { type: 'chooseTarget' } }), ROOM_ERR.NOT_MEMBER);
@@ -228,7 +228,7 @@ describe('rules: moves', () => {
   async function rawMove(uid, change = (m) => m) {
     const match = await matchOf();
     const seq = match.seq + 1;
-    const next = change({ n: match.n, seq, stateJson: match.stateJson, log: { ...match.log, [seq]: '[]' } }, match);
+    const next = change({ n: match.n, seq, stateJson: match.stateJson, log: { ...match.log, [seq]: '[]' }, clockAt: match.clockAt }, match);
     return rt.userDb(uid).ref(`rooms/${CODE}/match`).set(next);
   }
 

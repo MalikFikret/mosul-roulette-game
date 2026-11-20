@@ -1,8 +1,15 @@
 // Matches on top of the Realtime Database: start a match, submit engine actions through a
 // transaction, and watch the match as one seat sees it.
 //
-// rooms/{CODE}/match = { n, seq, stateJson, log: { [seq]: eventsJson } } (see match-helpers.js).
-// meta.status is 'lobby' between matches and 'playing' while a match runs.
+// rooms/{CODE}/match = { n, seq, stateJson, log: { [seq]: eventsJson }, clockAt } and
+// rooms/{CODE}/results/{n} = { scoreJson, joinedAt } (see match-helpers.js).
+// meta.status is 'lobby' between matches and 'playing' while a match runs. When a committed state
+// has ended, one update writes results/{n} and sets the status back to 'lobby'; the match node
+// stays (the UI shows the final state) until the next startMatch replaces it.
+//
+// The security rules cannot see the action inside stateJson. So the checks on system actions
+// (only the layer sends timeouts; only the host removes a player, only an absent one) live in
+// this layer only; a modified client could bypass them.
 //
 // Each device runs the pure engine itself: it parses stateJson, applies its own action and writes
 // the next state. The engine player ids are seat ids, and this module always acts as the caller's
@@ -14,12 +21,19 @@
 // Like the rest of src/rooms, this module never imports Firebase: the functions come in deps.
 
 import { MAX_PLAYERS, MIN_PLAYERS, applyAction, createMatch, eventsFor, validateConfig, viewFor } from '../engine/index.js';
+import { createClockRunner } from './clock.js';
 import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
-import { buildPlayers, eventsSince, parseLog, playerIdIn } from './match-helpers.js';
+import { isSeatPresent } from './host.js';
+import { buildPlayers, buildResult, computeSessionScores, eventsSince, parseLog, playerIdIn } from './match-helpers.js';
 import { LOBBY_STATUS, PLAYING_STATUS, paths } from './schema.js';
 
-// System actions come with task 3.5b (timeouts and removing a player go through the host).
-const NOT_YET_ALLOWED = ['timeout', 'removePlayer'];
+// Only removeAbsentPlayer (host, absent seat) may send this one; submitAction refuses it.
+const LAYER_ONLY = ['removePlayer'];
+// A timeout for a countdown that already moved on: normal (another device was faster).
+const STALE_TIMEOUT = 'STALE_TIMEOUT';
+// Another device that sees an ended match without results writes them after 1-3 s.
+const FINISH_DELAY_MS = 1000;
+const FINISH_JITTER_MS = 2000;
 
 function defaultRandomSeed() {
   const value = new Uint32Array(1);
@@ -43,8 +57,12 @@ function reporter(onError) {
  * @param {object} ctx shared helpers from api.js
  */
 export function createMatchFunctions(ctx) {
-  const { deps, db, ref, read, writeAll, requireUid, requireCode, currentSeat, traffic } = ctx;
+  const { deps, db, ref, read, writeAll, serverTimestamp, requireUid, requireCode, requireSeat, currentSeat, traffic } = ctx;
   const randomSeed = typeof deps.randomSeed === 'function' ? deps.randomSeed : defaultRandomSeed;
+  const now = typeof deps.now === 'function' ? deps.now : () => Date.now();
+  const random = typeof deps.random === 'function' ? deps.random : Math.random;
+  const setTimer = typeof deps.setTimeout === 'function' ? deps.setTimeout : (fn, ms) => globalThis.setTimeout(fn, ms);
+  const clearTimer = typeof deps.clearTimeout === 'function' ? deps.clearTimeout : (id) => globalThis.clearTimeout(id);
 
   // The newer database functions are checked only where they are used.
   function requireDeps(...names) {
@@ -106,7 +124,14 @@ export function createMatchFunctions(ctx) {
     const n = typeof previousN === 'number' ? previousN + 1 : 1;
     const values = {
       [paths.metaStatus(roomCode)]: PLAYING_STATUS,
-      [paths.match(roomCode)]: { n, seq: 0, stateJson: JSON.stringify(created.state), log: { 0: JSON.stringify(created.events) } },
+      [paths.match(roomCode)]: {
+        n,
+        seq: 0,
+        stateJson: JSON.stringify(created.state),
+        log: { 0: JSON.stringify(created.events) },
+        // The first countdown starts now (server time).
+        clockAt: serverTimestamp(),
+      },
     };
     traffic.addWritten(values);
     try {
@@ -122,35 +147,11 @@ export function createMatchFunctions(ctx) {
     return { n, players: players.map((p) => p.id) };
   }
 
-  /**
-   * Submits an engine action as the caller's own seat (any playerId in `action` is replaced).
-   * The action is applied in a transaction on the match node, so concurrent submissions are
-   * serialised: each attempt runs the engine on the latest state, and the result returned is the
-   * one of the final attempt.
-   * @param {{ uid: string, code: string, action: { type: string } }} input
-   * @returns {Promise<{ ok: true, events: object[] } | { ok: false, error: { code: string, message?: string } }>}
-   *   `events`: the events of this action that the caller's seat may see; `error.code`: the
-   *   engine's code (e.g. NOT_YOUR_TURN) when the engine refuses the action
-   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_ACTION, ACTION_NOT_ALLOWED (timeout
-   *   and removePlayer are not available yet), ROOM_NOT_FOUND, NO_MATCH, NOT_MEMBER,
-   *   WRITE_DENIED, INVALID_DEPENDENCIES
-   */
-  async function submitAction({ uid, code, action } = {}) {
-    requireUid(uid);
-    const roomCode = requireCode(code);
-    if (action === null || typeof action !== 'object' || Array.isArray(action) || typeof action.type !== 'string') {
-      throw new RoomError(ROOM_ERR.INVALID_ACTION, 'an action is an object with a string type');
-    }
-    if (NOT_YET_ALLOWED.includes(action.type)) {
-      throw new RoomError(ROOM_ERR.ACTION_NOT_ALLOWED, `${action.type} cannot be submitted by a player`);
-    }
-    requireDeps('runTransaction');
-    const meta = await readMeta(roomCode);
-    if (meta.status !== PLAYING_STATUS) throw new RoomError(ROOM_ERR.NO_MATCH, 'no match is running in this room');
-    const mySeat = await requireOwnSeat(roomCode, uid);
-    const move = { ...action, playerId: mySeat };
-
-    // The outcome of the latest attempt of the update function (it may run several times).
+  // Applies one engine action to the match in a transaction. The update function may run several
+  // times (each time on the latest value); the outcome returned is the one of the final attempt.
+  // A new countdown (clock.seq changed) stamps clockAt with the server time. If the committed
+  // state has ended, this device writes the results.
+  async function transact(roomCode, viewerSeat, move) {
     let outcome = null;
     const updateMatch = (current) => {
       // Without a cached value the SDK first calls with null; returning it unchanged makes the
@@ -177,23 +178,245 @@ export function createMatchFunctions(ctx) {
         seq,
         stateJson: JSON.stringify(result.state),
         log: { ...(current.log ?? {}), [seq]: JSON.stringify(result.events) },
+        clockAt: result.state.clock.seq !== state.clock.seq ? serverTimestamp() : current.clockAt,
       };
-      outcome = { ok: true, events: result.events };
+      outcome = { ok: true, events: result.events, ended: result.state.status === 'ended' };
       traffic.addWritten(next);
       return next;
     };
 
+    let committed;
     try {
-      await deps.runTransaction(ref(db, paths.match(roomCode)), updateMatch, { applyLocally: false });
+      committed = await deps.runTransaction(ref(db, paths.match(roomCode)), updateMatch, { applyLocally: false });
     } catch (error) {
       if (!isPermissionDenied(error)) throw error;
-      const now = await read(paths.meta(roomCode));
-      if (now === null || now.status !== PLAYING_STATUS) throw new RoomError(ROOM_ERR.NO_MATCH, 'the match is no longer running', error);
+      const meta = await read(paths.meta(roomCode));
+      if (meta === null || meta.status !== PLAYING_STATUS) throw new RoomError(ROOM_ERR.NO_MATCH, 'the match is no longer running', error);
       throw new RoomError(ROOM_ERR.WRITE_DENIED, 'the database refused the move', error);
     }
     if (outcome === null) throw new RoomError(ROOM_ERR.NO_MATCH, 'no match is running in this room');
     if (!outcome.ok) return outcome;
-    return { ok: true, events: eventsFor(outcome.events, mySeat) };
+
+    const reply = { ok: true, events: eventsFor(outcome.events, viewerSeat) };
+    if (outcome.ended) {
+      // This transaction ended the match: write the results now. If it fails, the other
+      // devices' runMatchClock writes them after a short delay.
+      reply.ended = true;
+      try {
+        await finishMatch(roomCode, committed?.snapshot?.val?.() ?? null);
+        reply.finished = true;
+      } catch {
+        reply.finished = false;
+      }
+    }
+    return reply;
+  }
+
+  /**
+   * Writes the results of an ended match and sets the status back to 'lobby', in one update:
+   * results/{n} = { scoreJson: scoreMatch of all the match's log events (DEFAULT_SCORING),
+   * joinedAt: each player's seat joinedAt }. The results are deterministic, so a second writer
+   * would write the same thing; the rules refuse it because the entry exists, which counts as
+   * success here. Does nothing if the match has not ended.
+   * @param {string} roomCode
+   * @param {object | null} matchValue the match node as committed (read again if null)
+   */
+  async function finishMatch(roomCode, matchValue) {
+    const value = matchValue ?? (await read(paths.match(roomCode)));
+    if (value === null || typeof value !== 'object') return;
+    const state = JSON.parse(value.stateJson);
+    if (state.status !== 'ended') return;
+    if ((await read(paths.result(roomCode, value.n))) !== null) return;
+    const entry = buildResult(state, value.log, await read(paths.seats(roomCode)));
+    const values = { [paths.result(roomCode, value.n)]: entry, [paths.metaStatus(roomCode)]: LOBBY_STATUS };
+    traffic.addWritten(values);
+    try {
+      await writeAll(values);
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      // Another device wrote the same results first.
+      if ((await read(paths.result(roomCode, value.n))) !== null) return;
+      throw new RoomError(ROOM_ERR.WRITE_DENIED, 'the database refused the match results', error);
+    }
+  }
+
+  /**
+   * Submits an engine action as the caller's own seat (any playerId in `action` is replaced).
+   * The action is applied in a transaction on the match node, so concurrent submissions are
+   * serialised: each attempt runs the engine on the latest state, and the result returned is the
+   * one of the final attempt. A timeout is sent without a playerId, as { type: 'timeout', seq }
+   * (normally by runMatchClock); a STALE_TIMEOUT result just means another device was faster.
+   * If this action ends the match, the results are written too (`ended: true`).
+   * @param {{ uid: string, code: string, action: { type: string } }} input
+   * @returns {Promise<{ ok: true, events: object[], ended?: boolean, finished?: boolean }
+   *   | { ok: false, error: { code: string, message?: string } }>}
+   *   `events`: the events of this action that the caller's seat may see; `error.code`: the
+   *   engine's code (e.g. NOT_YOUR_TURN, STALE_TIMEOUT) when the engine refuses the action
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_ACTION, ACTION_NOT_ALLOWED
+   *   (removePlayer: use removeAbsentPlayer), ROOM_NOT_FOUND, NO_MATCH, NOT_MEMBER,
+   *   WRITE_DENIED, INVALID_DEPENDENCIES
+   */
+  async function submitAction({ uid, code, action } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    if (action === null || typeof action !== 'object' || Array.isArray(action) || typeof action.type !== 'string') {
+      throw new RoomError(ROOM_ERR.INVALID_ACTION, 'an action is an object with a string type');
+    }
+    if (LAYER_ONLY.includes(action.type)) {
+      throw new RoomError(ROOM_ERR.ACTION_NOT_ALLOWED, `${action.type} cannot be submitted by a player`);
+    }
+    requireDeps('runTransaction');
+    const meta = await readMeta(roomCode);
+    if (meta.status !== PLAYING_STATUS) throw new RoomError(ROOM_ERR.NO_MATCH, 'no match is running in this room');
+    const mySeat = await requireOwnSeat(roomCode, uid);
+    // A timeout belongs to the clock, not to a player: no playerId.
+    const move = action.type === 'timeout' ? { type: 'timeout', seq: action.seq } : { ...action, playerId: mySeat };
+    return transact(roomCode, mySeat, move);
+  }
+
+  /**
+   * The host removes a disconnected player from the running match (decision Q6): only a seat that
+   * is still alive in the match and whose presence is off right now. Sends
+   * { type: 'removePlayer', target } through the same transaction as submitAction. These checks
+   * live in this layer only: the rules cannot see the action inside stateJson.
+   * @param {{ uid: string, code: string, seatId: string }} input
+   * @returns {Promise<{ ok: true, events: object[], ended?: boolean } | { ok: false, error: object }>}
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_SEAT, ROOM_NOT_FOUND, NO_MATCH,
+   *   NOT_MEMBER, WRITE_DENIED (not the host, or the host's own seat), PLAYER_NOT_ALIVE (not a
+   *   living player of this match), SEAT_PRESENT (the seat is connected), INVALID_DEPENDENCIES
+   */
+  async function removeAbsentPlayer({ uid, code, seatId } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    requireSeat(seatId);
+    requireDeps('runTransaction');
+    const meta = await readMeta(roomCode);
+    if (meta.status !== PLAYING_STATUS) throw new RoomError(ROOM_ERR.NO_MATCH, 'no match is running in this room');
+    const mySeat = await requireOwnSeat(roomCode, uid);
+    if (meta.hostSeat !== mySeat) throw new RoomError(ROOM_ERR.WRITE_DENIED, 'only the host can remove a player');
+    if (seatId === mySeat) throw new RoomError(ROOM_ERR.WRITE_DENIED, 'the host cannot remove their own seat');
+    const match = await read(paths.match(roomCode));
+    const state = match === null ? null : JSON.parse(match.stateJson);
+    const player = state?.players.find((p) => p.id === seatId);
+    if (!player || !player.alive) {
+      throw new RoomError(ROOM_ERR.PLAYER_NOT_ALIVE, `${seatId} is not a living player of this match`);
+    }
+    const presence = (await read(paths.presence(roomCode))) ?? {};
+    if (isSeatPresent(presence[seatId])) {
+      throw new RoomError(ROOM_ERR.SEAT_PRESENT, `${seatId} is connected; only an absent player can be removed`);
+    }
+    return transact(roomCode, mySeat, { type: 'removePlayer', target: seatId });
+  }
+
+  /**
+   * Session points per seat, summed over the room's match results with the engine's session
+   * helpers. A result counts for a seat only if the joinedAt it recorded equals the seat's
+   * current joinedAt: a newcomer on a freed seat starts at 0, a recovered seat keeps its points.
+   * @param {{ uid: string, code: string }} input
+   * @returns {Promise<Record<string, number>>} every current seat, 0 without points
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, ROOM_NOT_FOUND, NOT_MEMBER
+   */
+  async function getSessionScores({ uid, code } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    await readMeta(roomCode);
+    await requireOwnSeat(roomCode, uid);
+    return computeSessionScores(await read(paths.results(roomCode)), await read(paths.seats(roomCode)));
+  }
+
+  /**
+   * Runs the match clock on this device (decision Q38): on every match update with a running
+   * countdown, schedules { type: 'timeout', seq } at the deadline (clockAt + shotTimeSeconds, in
+   * server time) if the clock waits for this device's seat, or at deadline + 3 s + 0-2 s
+   * otherwise, and only if the countdown has not moved on. A STALE_TIMEOUT answer is normal and
+   * is not reported. It also finishes a match that ended without results (after 1-3 s), in case
+   * the device that ended it could not. Separate from watchMatch, so a UI can watch without
+   * sending, and every device in the room can run the clock without watching.
+   * @param {{ uid: string, code: string, onError?: (error: unknown) => void }} input
+   * @returns {() => void} stop
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_DEPENDENCIES
+   */
+  function runMatchClock({ uid, code, onError } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    requireDeps('onValue', 'runTransaction');
+    const report = reporter(onError);
+
+    let stopped = false;
+    let offset = 0;
+    let seatId = null;
+    let finishTimer = null;
+    let finishFor = null;
+    const unsubscribers = [];
+
+    const runner = createClockRunner({
+      setTimeout: setTimer,
+      clearTimeout: clearTimer,
+      now,
+      random,
+      onFire(seq) {
+        transact(roomCode, seatId, { type: 'timeout', seq })
+          .then((result) => {
+            if (!result.ok && result.error.code !== STALE_TIMEOUT) report(new RoomError(ROOM_ERR.WRITE_DENIED, `timeout refused: ${result.error.code}`));
+          })
+          .catch(report);
+      },
+    });
+
+    function scheduleFinish(value) {
+      if (finishFor === value.n) return;
+      finishFor = value.n;
+      finishTimer = setTimer(() => {
+        finishTimer = null;
+        if (!stopped) finishMatch(roomCode, null).catch(report);
+      }, FINISH_DELAY_MS + random() * FINISH_JITTER_MS);
+    }
+
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      runner.stop();
+      if (finishTimer !== null) clearTimer(finishTimer);
+      for (const unsubscribe of unsubscribers) unsubscribe();
+    }
+
+    (async () => {
+      seatId = await currentSeat(roomCode, uid);
+      if (stopped) return;
+      unsubscribers.push(
+        deps.onValue(ref(db, '.info/serverTimeOffset'), (snapshot) => {
+          offset = Number(snapshot.val()) || 0;
+        }, report),
+        deps.onValue(
+          ref(db, paths.match(roomCode)),
+          (snapshot) => {
+            const value = snapshot.val();
+            traffic.addReceived(value);
+            if (stopped || value === null || typeof value !== 'object') return;
+            let state;
+            try {
+              state = JSON.parse(value.stateJson);
+            } catch (error) {
+              report(error);
+              return;
+            }
+            const ended = state.status === 'ended';
+            runner.update(
+              { ended, clock: state.clock, clockAt: value.clockAt, shotTimeSeconds: state.config.shotTimeSeconds, mySeat: playerIdIn(state, seatId) },
+              offset,
+            );
+            if (ended) scheduleFinish(value);
+          },
+          (error) => {
+            stop();
+            report(new RoomError(ROOM_ERR.NOT_MEMBER, `only a member of room ${roomCode} can run the match clock`, error));
+          },
+        ),
+      );
+      if (stopped) for (const unsubscribe of unsubscribers) unsubscribe();
+    })().catch(report);
+
+    return stop;
   }
 
   /**
@@ -270,6 +493,9 @@ export function createMatchFunctions(ctx) {
   return {
     startMatch,
     submitAction,
+    removeAbsentPlayer,
+    getSessionScores,
+    runMatchClock,
     watchMatch,
     /** Approximate traffic of startMatch, submitAction and watchMatch (see createTrafficCounter). */
     getTrafficStats: () => traffic.stats(),

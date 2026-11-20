@@ -28,6 +28,27 @@ const CREATE = all(
   "newData.parent().child('members').child(auth.uid).val() === 's01'",
 );
 
+// meta/status 'lobby' -> 'playing': the host, in the same write that starts a new match (match/seq
+// is 0 and match/n is new).
+const START_MATCH = all(
+  "data.val() === 'lobby'",
+  "newData.val() === 'playing'",
+  IS_HOST,
+  `${NEW_ROOM_FROM_DEPTH_2}.child('match/seq').val() === 0`,
+  either(`!${ROOM_BEFORE}.child('match').exists()`, `${NEW_ROOM_FROM_DEPTH_2}.child('match/n').val() !== ${ROOM_BEFORE}.child('match/n').val()`),
+);
+
+// meta/status 'playing' -> 'lobby': a member, only in the same write that creates the results of
+// the current match (results/{match n} did not exist before and exists after).
+const currentResult = `child('results').child(${ROOM_BEFORE}.child('match/n').val() + '')`;
+const END_MATCH = all(
+  "data.val() === 'playing'",
+  "newData.val() === 'lobby'",
+  isMember(ROOM_BEFORE),
+  `!${ROOM_BEFORE}.${currentResult}.exists()`,
+  `${NEW_ROOM_FROM_DEPTH_2}.${currentResult}.exists()`,
+);
+
 // Host absence, for path B. `data.val()` is the current host seat. Absent means no connection;
 // absent-since is presence lastSeenAt, or the seat's joinedAt if it was never seen.
 const hostPresence = `${ROOM_BEFORE}.child('presence').child(data.val())`;
@@ -66,17 +87,7 @@ export function metaRules() {
     visibility: { '.validate': "newData.val() === 'public' || newData.val() === 'private'" },
     mode: { '.validate': "newData.val() === 'classic' || newData.val() === 'custom'" },
     status: {
-      // 'lobby' -> 'playing' only: the host, in the same write that starts a new match (match/seq
-      // is 0 and match/n is new). Back to 'lobby' is not possible yet (task 3.5b).
-      '.write': all(
-        SIGNED_IN,
-        CODE_OK,
-        "data.val() === 'lobby'",
-        "newData.val() === 'playing'",
-        IS_HOST,
-        `${NEW_ROOM_FROM_DEPTH_2}.child('match/seq').val() === 0`,
-        either(`!${ROOM_BEFORE}.child('match').exists()`, `${NEW_ROOM_FROM_DEPTH_2}.child('match/n').val() !== ${ROOM_BEFORE}.child('match/n').val()`),
-      ),
+      '.write': all(SIGNED_IN, CODE_OK, anyOf(START_MATCH, END_MATCH)),
       // A new room starts in the lobby.
       '.validate': anyOf("newData.val() === 'lobby'", all("newData.val() === 'playing'", `${ROOM_BEFORE}.exists()`)),
     },

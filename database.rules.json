@@ -14,7 +14,7 @@
             ".validate": "newData.val() === 'classic' || newData.val() === 'custom'"
           },
           "status": {
-            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && data.val() === 'lobby' && newData.val() === 'playing' && root.child('rooms').child($code).child('members').child(auth.uid).val() === root.child('rooms').child($code).child('meta/hostSeat').val() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('meta/hostSeat').val()).child('uid').val() === auth.uid && newData.parent().parent().child('match/seq').val() === 0 && (!root.child('rooms').child($code).child('match').exists() || newData.parent().parent().child('match/n').val() !== root.child('rooms').child($code).child('match/n').val())",
+            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && ((data.val() === 'lobby' && newData.val() === 'playing' && root.child('rooms').child($code).child('members').child(auth.uid).val() === root.child('rooms').child($code).child('meta/hostSeat').val() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('meta/hostSeat').val()).child('uid').val() === auth.uid && newData.parent().parent().child('match/seq').val() === 0 && (!root.child('rooms').child($code).child('match').exists() || newData.parent().parent().child('match/n').val() !== root.child('rooms').child($code).child('match/n').val())) || (data.val() === 'playing' && newData.val() === 'lobby' && root.child('rooms').child($code).child('members').child(auth.uid).exists() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('members').child(auth.uid).val()).child('uid').val() === auth.uid && !root.child('rooms').child($code).child('results').child(root.child('rooms').child($code).child('match/n').val() + '').exists() && newData.parent().parent().child('results').child(root.child('rooms').child($code).child('match/n').val() + '').exists()))",
             ".validate": "((newData.val() === 'lobby') || (newData.val() === 'playing' && root.child('rooms').child($code).exists()))"
           },
           "hostSeat": {
@@ -183,7 +183,7 @@
         "match": {
           ".read": "auth != null && root.child('rooms').child($code).child('members').child(auth.uid).exists() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('members').child(auth.uid).val()).child('uid').val() === auth.uid",
           ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && newData.exists() && ((root.child('rooms').child($code).child('members').child(auth.uid).val() === root.child('rooms').child($code).child('meta/hostSeat').val() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('meta/hostSeat').val()).child('uid').val() === auth.uid && root.child('rooms').child($code).child('meta/status').val() === 'lobby' && newData.parent().child('meta/status').val() === 'playing' && ((!root.child('rooms').child($code).child('match').exists() && newData.child('n').val() === 1) || (root.child('rooms').child($code).child('match').exists() && newData.child('n').val() === root.child('rooms').child($code).child('match').child('n').val() + 1)) && newData.child('seq').val() === 0) || (root.child('rooms').child($code).child('members').child(auth.uid).exists() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('members').child(auth.uid).val()).child('uid').val() === auth.uid && root.child('rooms').child($code).child('meta/status').val() === 'playing' && data.exists() && newData.child('n').val() === data.child('n').val() && newData.child('seq').val() === data.child('seq').val() + 1 && newData.child('log').child(data.child('seq').val() + '').val() === data.child('log').child(data.child('seq').val() + '').val()))",
-          ".validate": "newData.hasChildren(['n', 'seq', 'stateJson', 'log'])",
+          ".validate": "newData.hasChildren(['n', 'seq', 'stateJson', 'log', 'clockAt'])",
           "n": {
             ".validate": "newData.isNumber()"
           },
@@ -193,6 +193,9 @@
           "stateJson": {
             ".validate": "newData.isString() && newData.val().length <= 200000"
           },
+          "clockAt": {
+            ".validate": "newData.isNumber() && newData.val() <= now"
+          },
           "log": {
             ".validate": "newData.hasChildren()",
             "$entry": {
@@ -201,6 +204,25 @@
           },
           "$other": {
             ".validate": false
+          }
+        },
+        "results": {
+          ".read": "auth != null && root.child('rooms').child($code).child('members').child(auth.uid).exists() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('members').child(auth.uid).val()).child('uid').val() === auth.uid",
+          "$n": {
+            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && !data.exists() && newData.exists() && root.child('rooms').child($code).child('members').child(auth.uid).exists() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('members').child(auth.uid).val()).child('uid').val() === auth.uid && root.child('rooms').child($code).child('meta/status').val() === 'playing' && $n === root.child('rooms').child($code).child('match/n').val() + '' && newData.parent().parent().child('meta/status').val() === 'lobby'",
+            ".validate": "newData.hasChildren(['scoreJson', 'joinedAt'])",
+            "scoreJson": {
+              ".validate": "newData.isString() && newData.val().length <= 200000"
+            },
+            "joinedAt": {
+              ".validate": "newData.hasChildren()",
+              "$seatId": {
+                ".validate": "$seatId.matches(/^s(0[1-9]|1[0-5])$/) && newData.isNumber()"
+              }
+            },
+            "$other": {
+              ".validate": false
+            }
           }
         },
         "$other": {

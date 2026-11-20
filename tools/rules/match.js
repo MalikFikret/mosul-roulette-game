@@ -6,7 +6,8 @@
 //   n is the previous n + 1 (or 1), seq is 0 and the log holds entry 0 only.
 // - Move: any member while the status is 'playing' (submitAction's transaction): n unchanged,
 //   seq + 1, a new log entry under the new seq, old entries unchanged.
-// - The match is never deleted (for now).
+// - clockAt (server time the current countdown started) is a number, never in the future.
+// - The match is never deleted (for now); after the end it stays until the next start.
 
 import {
   CODE_OK,
@@ -52,11 +53,12 @@ export function matchRules() {
   return {
     '.read': all(SIGNED_IN, isMember(ROOM_BEFORE)),
     '.write': all(SIGNED_IN, CODE_OK, 'newData.exists()', anyOf(START, MOVE)),
-    '.validate': "newData.hasChildren(['n', 'seq', 'stateJson', 'log'])",
+    '.validate': "newData.hasChildren(['n', 'seq', 'stateJson', 'log', 'clockAt'])",
     n: { '.validate': 'newData.isNumber()' },
     // The log has an entry for the current seq.
     seq: { '.validate': "newData.isNumber() && newData.parent().child('log').child(newData.val() + '').exists()" },
     stateJson: { '.validate': `newData.isString() && newData.val().length <= ${STATE_JSON_MAX}` },
+    clockAt: { '.validate': 'newData.isNumber() && newData.val() <= now' },
     log: {
       '.validate': 'newData.hasChildren()',
       $entry: {

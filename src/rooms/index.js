@@ -2,7 +2,17 @@
 // Nothing here imports Firebase: database functions are injected into createRoomApi().
 
 export { createRoomApi } from './api.js';
-export { buildPlayers, createTrafficCounter, eventsSince, jsonSize, parseLog, playerIdIn } from './match-helpers.js';
+export {
+  buildPlayers,
+  buildResult,
+  computeSessionScores,
+  createTrafficCounter,
+  eventsSince,
+  jsonSize,
+  parseLog,
+  playerIdIn,
+} from './match-helpers.js';
+export { BACKUP_DELAY_MS, BACKUP_JITTER_MS, createClockRunner, planTimeout } from './clock.js';
 export { CODE_ALPHABET, CODE_LENGTH, generateRoomCode, isValidRoomCode, normalizeRoomCode } from './code.js';
 export { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
 export { HOST_ABSENCE_MS, absentSince, chooseNewHost, isHostAbsentLongEnough, isSeatPresent } from './host.js';

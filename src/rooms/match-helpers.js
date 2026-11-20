@@ -7,9 +7,12 @@
 // - stateJson: the engine state as ONE JSON string (the Realtime Database drops empty arrays and
 //   nulls, which the engine state contains);
 // - log/{seq}: the engine events produced by that write, as a JSON string (all of them, public
-//   and private: each device filters them for its own seat with the engine's eventsFor).
+//   and private: each device filters them for its own seat with the engine's eventsFor);
+// - clockAt: the server time the current countdown started.
+//
+// rooms/{CODE}/results/{n} = { scoreJson, joinedAt: { [seatId]: number } }: the result of match n.
 
-import { eventsFor } from '../engine/index.js';
+import { DEFAULT_SCORING, addMatchToSession, createSession, eventsFor, scoreMatch } from '../engine/index.js';
 import { isSeatId } from './schema.js';
 
 /**
@@ -115,4 +118,68 @@ export function createTrafficCounter() {
       snapshots = 0;
     },
   };
+}
+
+/**
+ * Session points per seat, summed over the room's match results with the engine's session
+ * helpers. Points belong to the person, not the seat: a result counts for a seat only if the
+ * joinedAt recorded in that result equals the seat's current joinedAt. A newcomer on a freed
+ * seat starts at 0; a player who recovered their seat (same joinedAt) keeps their points.
+ * @param {unknown} results rooms/{CODE}/results: { [n]: { scoreJson, joinedAt: { [seatId]: number } } }
+ *   (an object, or an array when the keys are 1..n)
+ * @param {Record<string, { joinedAt?: number }> | null} seats rooms/{CODE}/seats (current)
+ * @returns {Record<string, number>} every current seat, 0 if it has no points
+ */
+export function computeSessionScores(results, seats) {
+  const current = seats !== null && typeof seats === 'object' ? seats : {};
+  const entries = [];
+  if (results !== null && typeof results === 'object') {
+    for (const [key, entry] of Object.entries(results)) {
+      const n = Number(key);
+      if (!Number.isInteger(n) || entry === null || typeof entry !== 'object' || typeof entry.scoreJson !== 'string') continue;
+      let score;
+      try {
+        score = JSON.parse(entry.scoreJson);
+      } catch {
+        continue;
+      }
+      if (score === null || typeof score !== 'object' || score.players === null || typeof score.players !== 'object') continue;
+      entries.push({ n, score, joinedAt: entry.joinedAt ?? {} });
+    }
+  }
+  entries.sort((a, b) => a.n - b.n);
+
+  let session = createSession();
+  for (const { score, joinedAt } of entries) {
+    const players = {};
+    for (const [seatId, row] of Object.entries(score.players)) {
+      const seat = current[seatId];
+      if (seat && typeof seat === 'object' && typeof seat.joinedAt === 'number' && joinedAt[seatId] === seat.joinedAt) {
+        players[seatId] = row;
+      }
+    }
+    session = addMatchToSession(session, { players });
+  }
+  const out = {};
+  for (const seatId of Object.keys(current).filter(isSeatId).sort()) out[seatId] = session.totals[seatId] ?? 0;
+  return out;
+}
+
+/**
+ * The result entry of an ended match: its score (scoreMatch of all its log events with the
+ * default scoring) as a JSON string, and each player's seat joinedAt at the time of the match.
+ * @param {{ players: Array<{ id: string }> }} state the ended match state
+ * @param {unknown} log rooms/{CODE}/match/log
+ * @param {Record<string, { joinedAt?: number }> | null} seats
+ * @returns {{ scoreJson: string, joinedAt: Record<string, number> }}
+ */
+export function buildResult(state, log, seats) {
+  const events = parseLog(log).flatMap((entry) => entry.events);
+  const score = scoreMatch(events, DEFAULT_SCORING);
+  const joinedAt = {};
+  for (const p of state.players) {
+    const seat = seats?.[p.id];
+    if (seat && typeof seat.joinedAt === 'number') joinedAt[p.id] = seat.joinedAt;
+  }
+  return { scoreJson: JSON.stringify(score), joinedAt };
 }

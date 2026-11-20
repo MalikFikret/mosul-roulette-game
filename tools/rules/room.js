@@ -11,6 +11,7 @@ import { membersRules } from './members.js';
 import { metaRules } from './meta.js';
 import { namesRules } from './names.js';
 import { presenceRules } from './presence.js';
+import { resultsRules } from './results.js';
 import { seatsRules } from './seats.js';
 import { secretsRules } from './secrets.js';
 import { settingsRules } from './settings.js';
@@ -42,6 +43,7 @@ export function roomRules() {
     presence: presenceRules(),
     names: namesRules(),
     match: matchRules(),
+    results: resultsRules(),
     $other: REFUSE,
   };
 }

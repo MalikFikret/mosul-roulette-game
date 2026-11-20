@@ -51,6 +51,7 @@ const DEFAULT_MAX_CODE_ATTEMPTS = 10;
  * @property {Function} [onDisconnect]          firebase/database `onDisconnect` (startPresence only)
  * @property {Function} [runTransaction]        firebase/database `runTransaction` (submitAction only)
  * @property {() => number} [randomSeed]        32-bit match seed source (default: crypto.getRandomValues)
+ *   now / random / setTimeout / clearTimeout are also used by runMatchClock
  * @property {() => string} [generateCode]      room code source (default: generateRoomCode)
  * @property {number} [maxCodeAttempts]         codes to try before CODE_GENERATION_FAILED (default 10)
  * @property {() => string} [newConnId]         presence connection id source (default: random)
@@ -377,8 +378,10 @@ export function createRoomApi(deps) {
     ref,
     read,
     writeAll,
+    serverTimestamp,
     requireUid,
     requireCode,
+    requireSeat,
     currentSeat,
     traffic,
   });
