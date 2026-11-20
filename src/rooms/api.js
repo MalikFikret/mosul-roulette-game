@@ -17,6 +17,7 @@
 import { defaultConfig } from '../engine/index.js';
 import { generateRoomCode, normalizeRoomCode } from './code.js';
 import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
+import { createPresenceFunctions } from './presence.js';
 import {
   HOST_SEAT,
   LOBBY_STATUS,
@@ -40,12 +41,21 @@ const DEFAULT_MAX_CODE_ATTEMPTS = 10;
  * @property {(ref: unknown) => Promise<{ val(): unknown }>} get  firebase/database `get`
  * @property {(ref: unknown, values: object) => Promise<void>} update  firebase/database `update`
  * @property {() => object} serverTimestamp     firebase/database `serverTimestamp`
+ * @property {Function} [onValue]               firebase/database `onValue` (presence and host only)
+ * @property {Function} [onDisconnect]          firebase/database `onDisconnect` (startPresence only)
  * @property {() => string} [generateCode]      room code source (default: generateRoomCode)
  * @property {number} [maxCodeAttempts]         codes to try before CODE_GENERATION_FAILED (default 10)
+ * @property {() => string} [newConnId]         presence connection id source (default: random)
+ * @property {() => number} [now]               local clock in ms (default Date.now)
+ * @property {() => number} [random]            [0, 1) source for host choice and jitter (default Math.random)
+ * @property {Function} [setTimeout]            timer functions for watchHost (default: global ones)
+ * @property {Function} [clearTimeout]
  */
 
 /**
- * Creates the room API bound to one database instance.
+ * Creates the room API bound to one database instance. The original five deps are enough for
+ * createRoom, joinRoom, listSeatNames and recoverSeat; presence and host functions also need
+ * onValue (and onDisconnect for startPresence) and throw INVALID_DEPENDENCIES without them.
  * @param {RoomApiDeps} deps
  */
 export function createRoomApi(deps) {
@@ -89,6 +99,10 @@ export function createRoomApi(deps) {
     const trimmed = normalizeName(name);
     if (trimmed === null) throw new RoomError(ROOM_ERR.INVALID_NAME, 'name must be 1-20 characters after trimming');
     return trimmed;
+  }
+
+  function requireSeat(seatId) {
+    if (!isSeatId(seatId)) throw new RoomError(ROOM_ERR.INVALID_SEAT, 'seatId must be one of s01..s15');
   }
 
   function requirePin(pin) {
@@ -246,11 +260,13 @@ export function createRoomApi(deps) {
    *   ALREADY_MEMBER (this uid holds another seat in the room), SEAT_EMPTY,
    *   RETRY_LATER (the claim was refused: another attempt on this seat less than 2 s ago),
    *   WRONG_PIN (the transfer was refused)
+   * After the transfer, the seat's old presence connections are cleared (the old device can
+   * no longer clear them) and lastSeenAt is stamped.
    */
   async function recoverSeat({ uid, code, seatId, pin } = {}) {
     requireUid(uid);
     const roomCode = requireCode(code);
-    if (!isSeatId(seatId)) throw new RoomError(ROOM_ERR.INVALID_SEAT, 'seatId must be one of s01..s15');
+    requireSeat(seatId);
     requirePin(pin);
     await requireRoom(roomCode);
 
@@ -282,8 +298,33 @@ export function createRoomApi(deps) {
       if (!isPermissionDenied(error)) throw error;
       throw new RoomError(ROOM_ERR.WRONG_PIN, `the PIN for ${seatId} did not match`, error);
     }
+
+    // The old device's connections would keep the seat looking present, and it can no longer
+    // remove them itself. The new owner clears them and stamps lastSeenAt (absent from now
+    // until this device starts its own presence).
+    try {
+      await writeAll({
+        [paths.presenceConns(roomCode, seatId)]: null,
+        [paths.presenceSeen(roomCode, seatId)]: serverTimestamp(),
+      });
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+    }
     return { seatId };
   }
 
-  return { createRoom, joinRoom, listSeatNames, recoverSeat };
+  const presenceFunctions = createPresenceFunctions({
+    deps,
+    db,
+    ref,
+    read,
+    writeAll,
+    serverTimestamp,
+    requireUid,
+    requireCode,
+    requireSeat,
+    requireRoom,
+  });
+
+  return { createRoom, joinRoom, listSeatNames, recoverSeat, ...presenceFunctions };
 }

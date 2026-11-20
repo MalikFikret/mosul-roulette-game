@@ -7,14 +7,16 @@
 //   members/{uid}:   seatId
 //   secrets/{seatId}: "1234"   the seat's 4-digit PIN, readable by nobody
 //   claims/{seatId}:  { uid, pin, at: <server time> }   latest recovery attempt, readable by nobody
+//   presence/{seatId}: { conns: { [connId]: true }, lastSeenAt: <server time> }   members read;
+//                      present <=> conns has a child; written only by the seat's own member
 //
 // A user is a member only if members/{uid} exists AND seats/{that seat}/uid is that uid. After a
 // recovery moves a seat to a new device, the old device's members entry is stale and grants
 // nothing.
 //
 // Seat ids are exactly s01..s15. The fixed set enforces the player limit, because security
-// rules cannot count children. Later steps add more children of rooms/{CODE} (presence,
-// waiting flag, match, ...) next to these ones.
+// rules cannot count children. Later steps add more children of rooms/{CODE} (waiting
+// flag, match, ...) next to these ones.
 
 import { MAX_PLAYERS, MODES } from '../engine/index.js';
 
@@ -92,6 +94,12 @@ export const paths = Object.freeze({
   seat: (code, seatId) => `rooms/${code}/seats/${seatId}`,
   seatName: (code, seatId) => `rooms/${code}/seats/${seatId}/name`,
   seatUid: (code, seatId) => `rooms/${code}/seats/${seatId}/uid`,
+  seatJoinedAt: (code, seatId) => `rooms/${code}/seats/${seatId}/joinedAt`,
+  hostSeat: (code) => `rooms/${code}/meta/hostSeat`,
+  presence: (code) => `rooms/${code}/presence`,
+  presenceConns: (code, seatId) => `rooms/${code}/presence/${seatId}/conns`,
+  presenceConn: (code, seatId, connId) => `rooms/${code}/presence/${seatId}/conns/${connId}`,
+  presenceSeen: (code, seatId) => `rooms/${code}/presence/${seatId}/lastSeenAt`,
   members: (code) => `rooms/${code}/members`,
   member: (code, uid) => `rooms/${code}/members/${uid}`,
   secret: (code, seatId) => `rooms/${code}/secrets/${seatId}`,

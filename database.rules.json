@@ -16,7 +16,8 @@
             ".validate": "newData.val() === 'lobby'"
           },
           "hostSeat": {
-            ".validate": "newData.val() === 's01'"
+            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && data.exists() && newData.isString() && newData.val().matches(/^s(0[1-9]|1[0-5])$/) && newData.val() !== data.val() && root.child('rooms').child($code).child('seats').child(newData.val()).exists() && ((root.child('rooms').child($code).child('members').child(auth.uid).val() === data.val() && root.child('rooms').child($code).child('seats').child(data.val()).child('uid').val() === auth.uid) || (root.child('rooms').child($code).child('members').child(auth.uid).exists() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('members').child(auth.uid).val()).child('uid').val() === auth.uid && root.child('rooms').child($code).child('presence').child(newData.val()).child('conns').hasChildren() && !root.child('rooms').child($code).child('presence').child(data.val()).child('conns').hasChildren() && ((root.child('rooms').child($code).child('presence').child(data.val()).child('lastSeenAt').exists() && now > root.child('rooms').child($code).child('presence').child(data.val()).child('lastSeenAt').val() + 60000) || (!root.child('rooms').child($code).child('presence').child(data.val()).child('lastSeenAt').exists() && now > root.child('rooms').child($code).child('seats').child(data.val()).child('joinedAt').val() + 60000))))",
+            ".validate": "newData.isString() && newData.val().matches(/^s(0[1-9]|1[0-5])$/) && (data.parent().parent().exists() || newData.val() === 's01')"
           },
           "createdAt": {
             ".validate": "newData.val() === now"
@@ -142,6 +143,25 @@
               ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}$/)"
             },
             "at": {
+              ".validate": "newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "presence": {
+          ".read": "auth != null && data.parent().child('members').child(auth.uid).exists() && data.parent().child('seats').child(data.parent().child('members').child(auth.uid).val()).child('uid').val() === auth.uid",
+          "$seatId": {
+            "conns": {
+              ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && $seatId.matches(/^s(0[1-9]|1[0-5])$/) && root.child('rooms').child($code).child('members').child(auth.uid).val() === $seatId && root.child('rooms').child($code).child('seats').child($seatId).child('uid').val() === auth.uid",
+              ".validate": "newData.hasChildren()",
+              "$connId": {
+                ".validate": "$connId.matches(/^[A-Za-z0-9_-]{1,64}$/) && newData.val() === true"
+              }
+            },
+            "lastSeenAt": {
+              ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && $seatId.matches(/^s(0[1-9]|1[0-5])$/) && newData.exists() && root.child('rooms').child($code).child('members').child(auth.uid).val() === $seatId && root.child('rooms').child($code).child('seats').child($seatId).child('uid').val() === auth.uid",
               ".validate": "newData.val() === now"
             },
             "$other": {

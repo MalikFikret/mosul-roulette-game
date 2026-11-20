@@ -2,7 +2,7 @@
 // bypassing src/rooms/), seeding, and a room API bound to a signed-in test user.
 
 import assert from 'node:assert/strict';
-import { get, ref, serverTimestamp, update } from 'firebase/database';
+import { get, onDisconnect, onValue, ref, serverTimestamp, update } from 'firebase/database';
 import { defaultConfig } from '../src/engine/index.js';
 import { SEAT_IDS, createRoomApi, toDbValue } from '../src/rooms/index.js';
 
@@ -25,10 +25,29 @@ export async function rejectsWithCode(promise, code) {
 
 export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Polls `check` until it returns a truthy value (returned) or the timeout passes (throws).
+export async function waitFor(check, { timeout = 5000, interval = 100, what = 'condition' } = {}) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await wait(interval);
+  }
+}
+
 /** @param {ReturnType<import('./helpers.js').useRulesTestEnv>} rt */
 export function roomFixtures(rt) {
+  // Only the original five deps: presence and host functions are not available.
   function roomsApi(uid, extra = {}) {
     return createRoomApi({ db: rt.modularDb(uid), ref, get, update, serverTimestamp, ...extra });
+  }
+
+  // All deps, as the browser game will pass them. Returns the api and its database (for
+  // goOffline in tests).
+  function liveRoomsApi(uid, extra = {}) {
+    const db = rt.modularDb(uid);
+    return { db, api: createRoomApi({ db, ref, get, update, serverTimestamp, onValue, onDisconnect, ...extra }) };
   }
 
   // Everything stored under rooms/{code}, read with rules disabled.
@@ -89,5 +108,15 @@ export function roomFixtures(rt) {
     }
   }
 
-  return { roomsApi, dumpRoom, creationUpdate, joinUpdate, claimUpdate, transferUpdate, write, seedRoom };
+  // Writes presence entries with rules disabled, e.g. { s01: { lastSeenAt: Date.now() - 61000 } }
+  // or { s02: { conns: { c1: true } } }. Replaces the whole presence branch.
+  async function seedPresence(presence, code = CODE) {
+    await rt.withRulesDisabled((db) => db.ref(`rooms/${code}/presence`).set(presence));
+  }
+
+  async function setJoinedAt(seatId, joinedAt, code = CODE) {
+    await rt.withRulesDisabled((db) => db.ref(`rooms/${code}/seats/${seatId}/joinedAt`).set(joinedAt));
+  }
+
+  return { roomsApi, liveRoomsApi, seedPresence, setJoinedAt, dumpRoom, creationUpdate, joinUpdate, claimUpdate, transferUpdate, write, seedRoom };
 }
