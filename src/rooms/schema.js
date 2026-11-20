@@ -97,6 +97,7 @@ export const paths = Object.freeze({
   seatJoinedAt: (code, seatId) => `rooms/${code}/seats/${seatId}/joinedAt`,
   hostSeat: (code) => `rooms/${code}/meta/hostSeat`,
   presence: (code) => `rooms/${code}/presence`,
+  presenceSeat: (code, seatId) => `rooms/${code}/presence/${seatId}`,
   presenceConns: (code, seatId) => `rooms/${code}/presence/${seatId}/conns`,
   presenceConn: (code, seatId, connId) => `rooms/${code}/presence/${seatId}/conns/${connId}`,
   presenceSeen: (code, seatId) => `rooms/${code}/presence/${seatId}/lastSeenAt`,

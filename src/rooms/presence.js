@@ -37,6 +37,32 @@ function defaultConnId() {
 // connection, so the lastSeenAt onDisconnect handler is cancelled only by the last one to stop.
 const seenHolders = new WeakMap();
 
+// Running startPresence() and watchHost() calls per database instance and room code, so that
+// leaveRoom can stop all of them before the seat is deleted (stopLiveFor).
+const liveByDb = new WeakMap();
+
+function liveSetFor(db, code) {
+  let rooms = liveByDb.get(db);
+  if (!rooms) {
+    rooms = new Map();
+    liveByDb.set(db, rooms);
+  }
+  let set = rooms.get(code);
+  if (!set) {
+    set = new Set();
+    rooms.set(code, set);
+  }
+  return set;
+}
+
+function forgetLive(db, code, stop) {
+  const rooms = liveByDb.get(db);
+  const set = rooms?.get(code);
+  if (!set) return;
+  set.delete(stop);
+  if (set.size === 0) rooms.delete(code);
+}
+
 function holdersFor(db) {
   let holders = seenHolders.get(db);
   if (!holders) {
@@ -163,9 +189,11 @@ export function createPresenceFunctions(ctx) {
       report,
     );
 
-    return function stop() {
+    const live = liveSetFor(db, roomCode);
+    function stop() {
       if (stopped) return chain;
       stopped = true;
+      forgetLive(db, roomCode, stop);
       unsubscribe();
       const left = (holders.get(seenPath) ?? 1) - 1;
       if (left > 0) holders.set(seenPath, left);
@@ -175,7 +203,9 @@ export function createPresenceFunctions(ctx) {
         if (left === 0) await deps.onDisconnect(ref(db, seenPath)).cancel();
         await writeAll({ [connPath]: null, [seenPath]: serverTimestamp() });
       });
-    };
+    }
+    live.add(stop);
+    return stop;
   }
 
   // The host decision with an already known server time offset (shared by tryTakeOverHost
@@ -314,9 +344,10 @@ export function createPresenceFunctions(ctx) {
       }, report),
     ];
 
-    return function stop() {
+    function stop() {
       if (stopped) return;
       stopped = true;
+      forgetLive(db, roomCode, stop);
       cancelTimer();
       for (const unsubscribe of unsubscribers) {
         try {
@@ -325,7 +356,23 @@ export function createPresenceFunctions(ctx) {
           report(error);
         }
       }
-    };
+    }
+    liveSetFor(db, roomCode).add(stop);
+    return stop;
+  }
+
+  /**
+   * Stops every startPresence() and watchHost() running on this database instance for the room:
+   * presence connections are removed and their onDisconnect handlers cancelled while the
+   * caller is still a member. Used by leaveRoom before the seat is deleted. Errors of the
+   * individual stops are not thrown (they went to each call's onError).
+   * @param {string} roomCode
+   * @returns {Promise<void>}
+   */
+  async function stopLiveFor(roomCode) {
+    const set = liveByDb.get(db)?.get(roomCode);
+    if (!set) return;
+    await Promise.allSettled([...set].map((stop) => stop()));
   }
 
   /**
@@ -350,5 +397,5 @@ export function createPresenceFunctions(ctx) {
     return { hostSeat: seatId };
   }
 
-  return { startPresence, tryTakeOverHost, watchHost, handOverHost };
+  return { startPresence, tryTakeOverHost, watchHost, handOverHost, stopLiveFor };
 }

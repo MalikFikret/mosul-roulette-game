@@ -18,6 +18,7 @@ import { defaultConfig } from '../engine/index.js';
 import { generateRoomCode, normalizeRoomCode } from './code.js';
 import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
 import { createPresenceFunctions } from './presence.js';
+import { createLeaveFunction } from './leave.js';
 import {
   HOST_SEAT,
   LOBBY_STATUS,
@@ -54,7 +55,7 @@ const DEFAULT_MAX_CODE_ATTEMPTS = 10;
 
 /**
  * Creates the room API bound to one database instance. The original five deps are enough for
- * createRoom, joinRoom, listSeatNames and recoverSeat; presence and host functions also need
+ * createRoom, joinRoom, listSeatNames, recoverSeat and leaveRoom; presence and host functions also need
  * onValue (and onDisconnect for startPresence) and throw INVALID_DEPENDENCIES without them.
  * @param {RoomApiDeps} deps
  */
@@ -200,7 +201,8 @@ export function createRoomApi(deps) {
    *   `code` may be typed in lower case or with surrounding spaces;
    *   `pin`: the player's personal seat PIN, exactly 4 digits as a string
    * @returns {Promise<{ seatId: string }>}
-   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_NAME, INVALID_PIN, ROOM_NOT_FOUND, ROOM_FULL
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_NAME, INVALID_PIN, ROOM_NOT_FOUND
+   *   (also when the room was deleted while trying seats), ROOM_FULL
    */
   async function joinRoom({ uid, code, name, pin } = {}) {
     requireUid(uid);
@@ -227,6 +229,8 @@ export function createRoomApi(deps) {
     // The same user may have joined from another device while we were trying seats.
     const late = await currentSeat(roomCode, uid);
     if (late !== null) return { seatId: late };
+    // The last player may have deleted the room while we were trying seats.
+    await requireRoom(roomCode);
     throw new RoomError(ROOM_ERR.ROOM_FULL, `room ${roomCode} has no free seat`);
   }
 
@@ -313,7 +317,7 @@ export function createRoomApi(deps) {
     return { seatId };
   }
 
-  const presenceFunctions = createPresenceFunctions({
+  const { stopLiveFor, ...presenceFunctions } = createPresenceFunctions({
     deps,
     db,
     ref,
@@ -326,5 +330,15 @@ export function createRoomApi(deps) {
     requireRoom,
   });
 
-  return { createRoom, joinRoom, listSeatNames, recoverSeat, ...presenceFunctions };
+  const leaveRoom = createLeaveFunction({
+    deps,
+    read,
+    writeAll,
+    requireUid,
+    requireCode,
+    currentSeat,
+    stopLiveFor,
+  });
+
+  return { createRoom, joinRoom, listSeatNames, recoverSeat, ...presenceFunctions, leaveRoom };
 }
