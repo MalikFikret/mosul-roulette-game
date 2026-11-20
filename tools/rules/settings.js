@@ -2,7 +2,7 @@
 // fields. Readable by members; written only at creation, by the creator (seat s01). Keys and
 // types are checked here; value ranges are checked by the engine (validateConfig).
 
-import { BOOLEAN, CODE_OK, NUMBER, REFUSE, SIGNED_IN, all, isMember } from './helpers.js';
+import { BOOLEAN, CODE_OK, NUMBER, REFUSE, ROOM_BEFORE, SIGNED_IN, all, isMember } from './helpers.js';
 
 const ALL_TOOLS = '/^(detector|probe|counter|skip|swap|flip|shuffle|double|reverse|link|jail|handSwap|steal|shotShield|toolShield|heal)$/';
 // Tools sold in the Custom shop (every tool except swap).
@@ -10,11 +10,11 @@ const SHOP_TOOLS = '/^(detector|probe|counter|skip|flip|shuffle|double|reverse|l
 
 export function settingsRules() {
   return {
-    '.read': all(SIGNED_IN, isMember('data.parent()')),
+    '.read': all(SIGNED_IN, isMember(ROOM_BEFORE)),
     '.write': all(
       SIGNED_IN,
       CODE_OK,
-      '!data.parent().exists()',
+      `!${ROOM_BEFORE}.exists()`,
       "newData.parent().child('meta').exists()",
       "newData.parent().child('members').child(auth.uid).val() === 's01'",
     ),

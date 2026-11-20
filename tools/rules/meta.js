@@ -20,7 +20,7 @@ import {
 const CREATE = all(
   SIGNED_IN,
   CODE_OK,
-  '!data.parent().exists()',
+  `!${ROOM_BEFORE}.exists()`,
   "newData.parent().child('settings').exists()",
   "newData.parent().child('seats/s01/uid').val() === auth.uid",
   "newData.parent().child('members').child(auth.uid).val() === 's01'",
@@ -67,7 +67,7 @@ export function metaRules() {
     hostSeat: {
       '.write': HOST_SEAT_WRITE,
       // At creation the host is s01; afterwards any seat id.
-      '.validate': all('newData.isString()', isSeatId('newData.val()'), either('data.parent().parent().exists()', "newData.val() === 's01'")),
+      '.validate': all('newData.isString()', isSeatId('newData.val()'), either(`${ROOM_BEFORE}.exists()`, "newData.val() === 's01'")),
     },
     createdAt: { '.validate': 'newData.val() === now' },
     $other: REFUSE,

@@ -36,18 +36,18 @@ export const NUMBER = { '.validate': 'newData.isNumber()' };
 export const BOOLEAN = { '.validate': 'newData.isBoolean()' };
 
 // --- Where the room is -----------------------------------------------------------------------
-// A rule can reach the room node through `data` / `newData` and .parent() calls (how many
-// depends on the depth of the rule), or through `root` (always the data BEFORE the write).
+// The room BEFORE the write is always reached through `root` (the data before the write, at any
+// depth), never through data.parent() chains, so no rule depends on counting parent() calls.
+// The room AFTER the write has no such shortcut: it is reached from `newData` with .parent()
+// calls, so those helpers are named by the depth of the rule they are used in.
 
-/** The room before the write, from any depth. */
+/** The room before the write, from any rule below rooms/$code. */
 export const ROOM_BEFORE = "root.child('rooms').child($code)";
 
-/** From a node two levels below the room (e.g. seats/$seatId, secrets/$seatId). */
-export const ROOM_FROM_DEPTH_2 = 'data.parent().parent()';
+/** The room after the write, from a node two levels below it (e.g. seats/$seatId, secrets/$seatId). */
 export const NEW_ROOM_FROM_DEPTH_2 = 'newData.parent().parent()';
 
-/** From a node three levels below the room (seats/$seatId/uid). */
-export const ROOM_FROM_DEPTH_3 = 'data.parent().parent().parent()';
+/** The room after the write, from a node three levels below it (seats/$seatId/uid). */
 export const NEW_ROOM_FROM_DEPTH_3 = 'newData.parent().parent().parent()';
 
 // --- Membership ------------------------------------------------------------------------------

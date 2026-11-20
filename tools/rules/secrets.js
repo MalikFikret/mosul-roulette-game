@@ -5,7 +5,7 @@ import {
   CODE_OK,
   NEW_ROOM_FROM_DEPTH_2,
   PIN_PATTERN,
-  ROOM_FROM_DEPTH_2,
+  ROOM_BEFORE,
   SIGNED_IN,
   all,
   anyOf,
@@ -16,7 +16,7 @@ import {
 // Written only together with the creation of its seat by the same user; never changed.
 const CREATE_WITH_SEAT = all(
   '!data.exists()',
-  `!${ROOM_FROM_DEPTH_2}.child('seats').child($seatId).exists()`,
+  `!${ROOM_BEFORE}.child('seats').child($seatId).exists()`,
   `${NEW_ROOM_FROM_DEPTH_2}.child('seats').child($seatId).child('uid').val() === auth.uid`,
 );
 

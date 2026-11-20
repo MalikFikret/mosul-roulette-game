@@ -7,7 +7,7 @@ import {
   NEW_ROOM_FROM_DEPTH_2,
   PIN_PATTERN,
   REFUSE,
-  ROOM_FROM_DEPTH_2,
+  ROOM_BEFORE,
   SIGNED_IN,
   all,
   anyOf,
@@ -19,9 +19,9 @@ import {
 
 // A non-member claims an occupied seat for themselves, at most once per seat every 2 s.
 const CLAIM = all(
-  `${ROOM_FROM_DEPTH_2}.child('seats').child($seatId).exists()`,
+  `${ROOM_BEFORE}.child('seats').child($seatId).exists()`,
   "newData.child('uid').val() === auth.uid",
-  isNotMember(ROOM_FROM_DEPTH_2),
+  isNotMember(ROOM_BEFORE),
   either('!data.exists()', "now >= data.child('at').val() + 2000"),
 );
 

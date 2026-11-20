@@ -7,8 +7,7 @@ import {
   NEW_ROOM_FROM_DEPTH_2,
   NEW_ROOM_FROM_DEPTH_3,
   REFUSE,
-  ROOM_FROM_DEPTH_2,
-  ROOM_FROM_DEPTH_3,
+  ROOM_BEFORE,
   SIGNED_IN,
   all,
   anyOf,
@@ -28,7 +27,7 @@ const CREATE_SEAT = all(
   `${newRoom}.child('meta').exists()`,
   `${newRoom}.child('secrets').child($seatId).exists()`,
   `${newRoom}.child('members').child(auth.uid).val() === $seatId`,
-  isNotMember(ROOM_FROM_DEPTH_2),
+  isNotMember(ROOM_BEFORE),
 );
 
 // Leaving (between matches): your own seat goes, and in the same write its secret, claim,
@@ -51,7 +50,7 @@ const LEAVE_SEAT = all(
 // Seat recovery, write 2 (the transfer): only seats/$seatId/uid changes, to the writer, who is
 // not a member; the claim stored earlier (write 1) is the writer's and its PIN equals the
 // secret; the same write points the writer's members entry at this seat.
-const room = ROOM_FROM_DEPTH_3;
+const room = ROOM_BEFORE;
 const TRANSFER = all(
   SIGNED_IN,
   CODE_OK,
@@ -67,7 +66,7 @@ const TRANSFER = all(
 
 export function seatsRules() {
   return {
-    '.read': all(SIGNED_IN, isMember('data.parent()')),
+    '.read': all(SIGNED_IN, isMember(ROOM_BEFORE)),
     $seatId: {
       '.write': all(SIGNED_IN, CODE_OK, isSeatId('$seatId'), anyOf(CREATE_SEAT, LEAVE_SEAT)),
       '.validate': "newData.hasChildren(['uid', 'name', 'joinedAt'])",

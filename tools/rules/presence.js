@@ -20,7 +20,7 @@ const OWN_SEAT = all(SIGNED_IN, CODE_OK, isSeatId('$seatId'));
 
 export function presenceRules() {
   return {
-    '.read': all(SIGNED_IN, isMember('data.parent()')),
+    '.read': all(SIGNED_IN, isMember(ROOM_BEFORE)),
     $seatId: {
       // Leaving: the whole entry goes with your own seat. Requires the entry to be gone after the
       // write, so this grant never covers anything else below it.

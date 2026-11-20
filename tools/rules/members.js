@@ -4,7 +4,7 @@
 import {
   CODE_OK,
   NEW_ROOM_FROM_DEPTH_2,
-  ROOM_FROM_DEPTH_2,
+  ROOM_BEFORE,
   SIGNED_IN,
   all,
   anyOf,
@@ -15,7 +15,7 @@ import {
 } from './helpers.js';
 
 // The uid on a seat, before / after the write. `seat` is an expression giving a seat id.
-const uidBefore = (seat) => `${ROOM_FROM_DEPTH_2}.child('seats').child(${seat}).child('uid').val()`;
+const uidBefore = (seat) => `${ROOM_BEFORE}.child('seats').child(${seat}).child('uid').val()`;
 const uidAfter = (seat) => `${NEW_ROOM_FROM_DEPTH_2}.child('seats').child(${seat}).child('uid').val()`;
 
 // Leaving: delete your own entry, and stale entries of old devices that still point to the
@@ -37,7 +37,7 @@ const SET_OWN = all(
 
 export function membersRules() {
   return {
-    '.read': all(SIGNED_IN, isMember('data.parent()')),
+    '.read': all(SIGNED_IN, isMember(ROOM_BEFORE)),
     $uid: {
       '.read': 'auth != null && auth.uid === $uid',
       '.write': all(SIGNED_IN, CODE_OK, anyOf(LEAVE, all('auth.uid === $uid', anyOf(DELETE_OWN_STALE, SET_OWN)))),
