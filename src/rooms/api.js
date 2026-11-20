@@ -1,4 +1,4 @@
-// Room creation and joining on top of the Firebase Realtime Database.
+// Room creation, joining and seat recovery on top of the Firebase Realtime Database.
 //
 // This module never imports Firebase. The caller injects the database functions
 // (dependency injection): the browser passes the functions of the SDK loaded from the
@@ -7,6 +7,12 @@
 //
 // The security rules in database.rules.json are the real guard; the checks here only give
 // clear error codes before a write that the rules would refuse anyway.
+//
+// A seat belongs to the player, not the device. Each player picks a 4-digit PIN when taking a
+// seat; it is stored in secrets/{seatId}, which nobody can read. A player on a new device gets
+// the same seat back with recoverSeat: first a claim (claims/{seatId} = { uid, pin, at }),
+// throttled by the rules to one per seat every 2 seconds, then the transfer, which the rules
+// allow only if the claim is this user's and its PIN equals the secret.
 
 import { defaultConfig } from '../engine/index.js';
 import { generateRoomCode, normalizeRoomCode } from './code.js';
@@ -18,6 +24,7 @@ import {
   SEAT_IDS,
   VISIBILITIES,
   isSeatId,
+  isValidPin,
   isValidUid,
   normalizeName,
   paths,
@@ -68,12 +75,14 @@ export function createRoomApi(deps) {
     return update(ref(db), values);
   }
 
-  function seatEntry(uid, name) {
-    return { uid, name, joinedAt: serverTimestamp() };
-  }
-
   function requireUid(uid) {
     if (!isValidUid(uid)) throw new RoomError(ROOM_ERR.INVALID_UID, 'uid must be the signed-in user id');
+  }
+
+  function requireCode(code) {
+    const roomCode = normalizeRoomCode(code);
+    if (roomCode === null) throw new RoomError(ROOM_ERR.INVALID_CODE, 'not a valid room code');
+    return roomCode;
   }
 
   function requireName(name) {
@@ -82,17 +91,52 @@ export function createRoomApi(deps) {
     return trimmed;
   }
 
+  function requirePin(pin) {
+    if (!isValidPin(pin)) throw new RoomError(ROOM_ERR.INVALID_PIN, 'pin must be a string of exactly 4 digits');
+  }
+
+  async function requireRoom(code) {
+    if ((await read(paths.meta(code))) === null) {
+      throw new RoomError(ROOM_ERR.ROOM_NOT_FOUND, `no room with code ${code}`);
+    }
+  }
+
+  // The seat, members entry and secret of a newly taken seat, written in one update.
+  function seatTakeValues(code, seatId, uid, name, pin) {
+    return {
+      [paths.seat(code, seatId)]: { uid, name, joinedAt: serverTimestamp() },
+      [paths.member(code, uid)]: seatId,
+      [paths.secret(code, seatId)]: pin,
+    };
+  }
+
+  // The seat this uid really holds, or null. A members entry whose seat now belongs to another
+  // uid (the seat was recovered on another device) is stale and does not count. Only a real
+  // member may read seats/{seatId}/uid, so a refused read means the entry is stale.
+  async function currentSeat(code, uid) {
+    const seatId = await read(paths.member(code, uid));
+    if (!isSeatId(seatId)) return null;
+    try {
+      return (await read(paths.seatUid(code, seatId))) === uid ? seatId : null;
+    } catch (error) {
+      if (isPermissionDenied(error)) return null;
+      throw error;
+    }
+  }
+
   /**
    * Creates a new room in the lobby state. The creator takes seat s01 and is the host.
    * Settings are the engine's default config for the mode.
-   * @param {{ uid: string, name: string, visibility: 'public' | 'private', mode: 'classic' | 'custom' }} input
+   * @param {{ uid: string, name: string, pin: string, visibility: 'public' | 'private', mode: 'classic' | 'custom' }} input
+   *   `pin`: the creator's personal seat PIN, exactly 4 digits as a string
    * @returns {Promise<{ code: string, seatId: 's01' }>}
-   * @throws {RoomError} INVALID_UID, INVALID_NAME, INVALID_VISIBILITY, INVALID_MODE,
+   * @throws {RoomError} INVALID_UID, INVALID_NAME, INVALID_PIN, INVALID_VISIBILITY, INVALID_MODE,
    *   CODE_GENERATION_FAILED (every generated code was taken), WRITE_DENIED
    */
-  async function createRoom({ uid, name, visibility, mode } = {}) {
+  async function createRoom({ uid, name, pin, visibility, mode } = {}) {
     requireUid(uid);
     const playerName = requireName(name);
+    requirePin(pin);
     if (!VISIBILITIES.includes(visibility)) {
       throw new RoomError(ROOM_ERR.INVALID_VISIBILITY, `visibility must be one of: ${VISIBILITIES.join(', ')}`);
     }
@@ -117,8 +161,7 @@ export function createRoomApi(deps) {
             createdAt: serverTimestamp(),
           },
           [paths.settings(code)]: toDbValue(defaultConfig(mode)),
-          [paths.seat(code, HOST_SEAT)]: seatEntry(uid, playerName),
-          [paths.member(code, uid)]: HOST_SEAT,
+          ...seatTakeValues(code, HOST_SEAT, uid, playerName, pin),
         });
         return { code, seatId: HOST_SEAT };
       } catch (error) {
@@ -136,34 +179,31 @@ export function createRoomApi(deps) {
 
   /**
    * Joins an existing room, taking the first free seat in the order s01..s15.
-   * A user who is already a member gets their existing seat back and nothing is written.
-   * @param {{ uid: string, code: string, name: string }} input
-   *   `code` may be typed in lower case or with surrounding spaces
+   * A user who is already a member gets their existing seat back and nothing is written (the
+   * pin is then ignored, but must still be well-formed). A stale members entry (the seat was
+   * recovered on another device) counts as not a member: a new free seat is taken.
+   * @param {{ uid: string, code: string, name: string, pin: string }} input
+   *   `code` may be typed in lower case or with surrounding spaces;
+   *   `pin`: the player's personal seat PIN, exactly 4 digits as a string
    * @returns {Promise<{ seatId: string }>}
-   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_NAME, ROOM_NOT_FOUND, ROOM_FULL
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_NAME, INVALID_PIN, ROOM_NOT_FOUND, ROOM_FULL
    */
-  async function joinRoom({ uid, code, name } = {}) {
+  async function joinRoom({ uid, code, name, pin } = {}) {
     requireUid(uid);
-    const roomCode = normalizeRoomCode(code);
-    if (roomCode === null) throw new RoomError(ROOM_ERR.INVALID_CODE, 'not a valid room code');
+    const roomCode = requireCode(code);
     const playerName = requireName(name);
+    requirePin(pin);
+    await requireRoom(roomCode);
 
-    if ((await read(paths.meta(roomCode))) === null) {
-      throw new RoomError(ROOM_ERR.ROOM_NOT_FOUND, `no room with code ${roomCode}`);
-    }
+    const existing = await currentSeat(roomCode, uid);
+    if (existing !== null) return { seatId: existing };
 
-    const existing = await read(paths.member(roomCode, uid));
-    if (isSeatId(existing)) return { seatId: existing };
-
-    // A non-member cannot read the seats, so try each one: the rules refuse a seat that is
-    // taken, and the seat plus the members entry are written in one atomic update, so two
+    // A non-member cannot read who sits where, so try each seat: the rules refuse a seat that
+    // is taken, and seat, members entry and secret are written in one atomic update, so two
     // players can never end up on the same seat.
     for (const seatId of SEAT_IDS) {
       try {
-        await writeAll({
-          [paths.seat(roomCode, seatId)]: seatEntry(uid, playerName),
-          [paths.member(roomCode, uid)]: seatId,
-        });
+        await writeAll(seatTakeValues(roomCode, seatId, uid, playerName, pin));
         return { seatId };
       } catch (error) {
         if (!isPermissionDenied(error)) throw error;
@@ -171,10 +211,79 @@ export function createRoomApi(deps) {
     }
 
     // The same user may have joined from another device while we were trying seats.
-    const late = await read(paths.member(roomCode, uid));
-    if (isSeatId(late)) return { seatId: late };
+    const late = await currentSeat(roomCode, uid);
+    if (late !== null) return { seatId: late };
     throw new RoomError(ROOM_ERR.ROOM_FULL, `room ${roomCode} has no free seat`);
   }
 
-  return { createRoom, joinRoom };
+  /**
+   * Lists the names of the occupied seats, in seat order, for any signed-in user (a returning
+   * player picks their own name before entering their PIN). Only names are readable to
+   * non-members; who holds a seat (uid) stays hidden.
+   * @param {{ uid: string, code: string }} input
+   * @returns {Promise<Array<{ seatId: string, name: string }>>}
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, ROOM_NOT_FOUND
+   */
+  async function listSeatNames({ uid, code } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    await requireRoom(roomCode);
+    const names = await Promise.all(SEAT_IDS.map((seatId) => read(paths.seatName(roomCode, seatId))));
+    const seats = [];
+    SEAT_IDS.forEach((seatId, i) => {
+      if (typeof names[i] === 'string') seats.push({ seatId, name: names[i] });
+    });
+    return seats;
+  }
+
+  /**
+   * Gets a seat back on this device with the seat's PIN. The seat keeps its id, name and
+   * joinedAt (and stays the host seat if it is meta.hostSeat); the device that held it before
+   * loses its membership.
+   * @param {{ uid: string, code: string, seatId: string, pin: string }} input
+   * @returns {Promise<{ seatId: string }>}
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_SEAT, INVALID_PIN, ROOM_NOT_FOUND,
+   *   ALREADY_MEMBER (this uid holds another seat in the room), SEAT_EMPTY,
+   *   RETRY_LATER (the claim was refused: another attempt on this seat less than 2 s ago),
+   *   WRONG_PIN (the transfer was refused)
+   */
+  async function recoverSeat({ uid, code, seatId, pin } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    if (!isSeatId(seatId)) throw new RoomError(ROOM_ERR.INVALID_SEAT, 'seatId must be one of s01..s15');
+    requirePin(pin);
+    await requireRoom(roomCode);
+
+    const existing = await currentSeat(roomCode, uid);
+    if (existing === seatId) return { seatId };
+    if (existing !== null) {
+      // Taking a second seat would leave the first one without a device.
+      throw new RoomError(ROOM_ERR.ALREADY_MEMBER, `this user already holds ${existing} in room ${roomCode}`);
+    }
+    if ((await read(paths.seatName(roomCode, seatId))) === null) {
+      throw new RoomError(ROOM_ERR.SEAT_EMPTY, `seat ${seatId} is empty`);
+    }
+
+    // Write 1: the claim. The rules allow one claim per seat every 2 seconds (server time).
+    try {
+      await writeAll({ [paths.claim(roomCode, seatId)]: { uid, pin, at: serverTimestamp() } });
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      throw new RoomError(ROOM_ERR.RETRY_LATER, `another attempt on ${seatId} was made too recently`, error);
+    }
+
+    // Write 2: the transfer. The rules compare the claimed PIN with the secret.
+    try {
+      await writeAll({
+        [paths.seatUid(roomCode, seatId)]: uid,
+        [paths.member(roomCode, uid)]: seatId,
+      });
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      throw new RoomError(ROOM_ERR.WRONG_PIN, `the PIN for ${seatId} did not match`, error);
+    }
+    return { seatId };
+  }
+
+  return { createRoom, joinRoom, listSeatNames, recoverSeat };
 }

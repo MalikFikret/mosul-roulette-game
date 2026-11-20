@@ -13,6 +13,7 @@ export {
   SEAT_IDS,
   VISIBILITIES,
   isSeatId,
+  isValidPin,
   isValidUid,
   normalizeName,
   paths,

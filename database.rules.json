@@ -6,30 +6,53 @@
           ".read": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/)",
           ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && !data.parent().exists() && newData.parent().child('settings').exists() && newData.parent().child('seats/s01/uid').val() === auth.uid && newData.parent().child('members').child(auth.uid).val() === 's01'",
           ".validate": "newData.hasChildren(['visibility', 'mode', 'status', 'hostSeat', 'createdAt'])",
-          "visibility": { ".validate": "newData.val() === 'public' || newData.val() === 'private'" },
-          "mode": { ".validate": "newData.val() === 'classic' || newData.val() === 'custom'" },
-          "status": { ".validate": "newData.val() === 'lobby'" },
-          "hostSeat": { ".validate": "newData.val() === 's01'" },
-          "createdAt": { ".validate": "newData.val() === now" },
-          "$other": { ".validate": false }
+          "visibility": {
+            ".validate": "newData.val() === 'public' || newData.val() === 'private'"
+          },
+          "mode": {
+            ".validate": "newData.val() === 'classic' || newData.val() === 'custom'"
+          },
+          "status": {
+            ".validate": "newData.val() === 'lobby'"
+          },
+          "hostSeat": {
+            ".validate": "newData.val() === 's01'"
+          },
+          "createdAt": {
+            ".validate": "newData.val() === now"
+          },
+          "$other": {
+            ".validate": false
+          }
         },
-
         "settings": {
-          ".read": "auth != null && data.parent().child('members').child(auth.uid).exists()",
+          ".read": "auth != null && data.parent().child('members').child(auth.uid).exists() && data.parent().child('seats').child(data.parent().child('members').child(auth.uid).val()).child('uid').val() === auth.uid",
           ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && !data.parent().exists() && newData.parent().child('meta').exists() && newData.parent().child('members').child(auth.uid).val() === 's01'",
           ".validate": "newData.hasChildren(['mode', 'hp', 'toolsPerReload', 'toolsPerTurn', 'shotTimeSeconds', 'enabledTools', 'randomizeSeats']) && newData.hasChild('custom') === (newData.child('mode').val() === 'custom')",
-          "mode": { ".validate": "newData.val() === newData.parent().parent().child('meta/mode').val()" },
-          "hp": { ".validate": "newData.isNumber()" },
-          "toolsPerReload": { ".validate": "newData.isNumber()" },
-          "toolsPerTurn": { ".validate": "newData.isNumber()" },
-          "shotTimeSeconds": { ".validate": "newData.isNumber()" },
+          "mode": {
+            ".validate": "newData.val() === newData.parent().parent().child('meta/mode').val()"
+          },
+          "hp": {
+            ".validate": "newData.isNumber()"
+          },
+          "toolsPerReload": {
+            ".validate": "newData.isNumber()"
+          },
+          "toolsPerTurn": {
+            ".validate": "newData.isNumber()"
+          },
+          "shotTimeSeconds": {
+            ".validate": "newData.isNumber()"
+          },
           "enabledTools": {
             ".validate": "newData.hasChildren()",
             "$index": {
               ".validate": "$index.matches(/^([0-9]|1[0-5])$/) && newData.isString() && newData.val().matches(/^(detector|probe|counter|skip|swap|flip|shuffle|double|reverse|link|jail|handSwap|steal|shotShield|toolShield|heal)$/)"
             }
           },
-          "randomizeSeats": { ".validate": "newData.isBoolean()" },
+          "randomizeSeats": {
+            ".validate": "newData.isBoolean()"
+          },
           "custom": {
             ".validate": "newData.hasChildren(['prices', 'limitedStock', 'stock', 'startCoins', 'coinsPerReload', 'selfBlankCoin', 'lootCoinCap'])",
             "prices": {
@@ -38,48 +61,97 @@
                 ".validate": "$tool.matches(/^(detector|probe|counter|skip|flip|shuffle|double|reverse|link|jail|handSwap|steal|shotShield|toolShield|heal)$/) && newData.isNumber()"
               }
             },
-            "limitedStock": { ".validate": "newData.isBoolean()" },
+            "limitedStock": {
+              ".validate": "newData.isBoolean()"
+            },
             "stock": {
               ".validate": "newData.hasChildren()",
               "$tool": {
                 ".validate": "$tool.matches(/^(detector|probe|counter|skip|flip|shuffle|double|reverse|link|jail|handSwap|steal|shotShield|toolShield|heal)$/) && (newData.isNumber() || newData.hasChildren(['aliveDivisor']))",
-                "aliveDivisor": { ".validate": "newData.isNumber()" },
-                "$other": { ".validate": false }
+                "aliveDivisor": {
+                  ".validate": "newData.isNumber()"
+                },
+                "$other": {
+                  ".validate": false
+                }
               }
             },
-            "startCoins": { ".validate": "newData.isNumber()" },
-            "coinsPerReload": { ".validate": "newData.isNumber()" },
-            "selfBlankCoin": { ".validate": "newData.isNumber()" },
-            "lootCoinCap": { ".validate": "newData.isNumber()" },
-            "$other": { ".validate": false }
-          },
-          "$other": { ".validate": false }
-        },
-
-        "seats": {
-          ".read": "auth != null && data.parent().child('members').child(auth.uid).exists()",
-          "$seatId": {
-            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && $seatId.matches(/^s(0[1-9]|1[0-5])$/) && !data.exists() && newData.child('uid').val() === auth.uid && newData.parent().parent().child('meta').exists() && !data.parent().parent().child('members').child(auth.uid).exists() && newData.parent().parent().child('members').child(auth.uid).val() === $seatId",
-            ".validate": "newData.hasChildren(['uid', 'name', 'joinedAt'])",
-            "uid": { ".validate": "newData.val() === auth.uid" },
-            "name": {
-              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && !newData.val().beginsWith(' ') && !newData.val().endsWith(' ')"
+            "startCoins": {
+              ".validate": "newData.isNumber()"
             },
-            "joinedAt": { ".validate": "newData.val() === now" },
-            "$other": { ".validate": false }
+            "coinsPerReload": {
+              ".validate": "newData.isNumber()"
+            },
+            "selfBlankCoin": {
+              ".validate": "newData.isNumber()"
+            },
+            "lootCoinCap": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "$other": {
+            ".validate": false
           }
         },
-
+        "seats": {
+          ".read": "auth != null && data.parent().child('members').child(auth.uid).exists() && data.parent().child('seats').child(data.parent().child('members').child(auth.uid).val()).child('uid').val() === auth.uid",
+          "$seatId": {
+            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && $seatId.matches(/^s(0[1-9]|1[0-5])$/) && !data.exists() && newData.child('uid').val() === auth.uid && newData.parent().parent().child('meta').exists() && newData.parent().parent().child('secrets').child($seatId).exists() && newData.parent().parent().child('members').child(auth.uid).val() === $seatId && (!data.parent().parent().child('members').child(auth.uid).exists() || data.parent().parent().child('seats').child(data.parent().parent().child('members').child(auth.uid).val()).child('uid').val() !== auth.uid)",
+            ".validate": "newData.hasChildren(['uid', 'name', 'joinedAt'])",
+            "uid": {
+              ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && $seatId.matches(/^s(0[1-9]|1[0-5])$/) && data.exists() && newData.val() === auth.uid && (!data.parent().parent().parent().child('members').child(auth.uid).exists() || data.parent().parent().parent().child('seats').child(data.parent().parent().parent().child('members').child(auth.uid).val()).child('uid').val() !== auth.uid) && data.parent().parent().parent().child('claims').child($seatId).child('uid').val() === auth.uid && data.parent().parent().parent().child('secrets').child($seatId).exists() && data.parent().parent().parent().child('claims').child($seatId).child('pin').val() === data.parent().parent().parent().child('secrets').child($seatId).val() && newData.parent().parent().parent().child('members').child(auth.uid).val() === $seatId",
+              ".validate": "newData.val() === auth.uid"
+            },
+            "name": {
+              ".read": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/)",
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20 && !newData.val().beginsWith(' ') && !newData.val().endsWith(' ')"
+            },
+            "joinedAt": {
+              ".validate": "newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
         "members": {
-          ".read": "auth != null && data.child(auth.uid).exists()",
+          ".read": "auth != null && data.parent().child('members').child(auth.uid).exists() && data.parent().child('seats').child(data.parent().child('members').child(auth.uid).val()).child('uid').val() === auth.uid",
           "$uid": {
             ".read": "auth != null && auth.uid === $uid",
-            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && auth.uid === $uid && !data.exists() && newData.isString() && newData.val().matches(/^s(0[1-9]|1[0-5])$/) && !data.parent().parent().child('seats').child(newData.val()).exists() && newData.parent().parent().child('seats').child(newData.val()).child('uid').val() === auth.uid",
+            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && auth.uid === $uid && ((!newData.exists() && data.exists() && data.parent().parent().child('seats').child(data.val()).child('uid').val() !== auth.uid) || ((!data.exists() || data.parent().parent().child('seats').child(data.val()).child('uid').val() !== auth.uid) && newData.isString() && newData.val().matches(/^s(0[1-9]|1[0-5])$/) && newData.parent().parent().child('seats').child(newData.val()).child('uid').val() === auth.uid && data.parent().parent().child('seats').child(newData.val()).child('uid').val() !== auth.uid))",
             ".validate": "newData.isString() && newData.val().matches(/^s(0[1-9]|1[0-5])$/)"
           }
         },
-
-        "$other": { ".validate": false }
+        "secrets": {
+          "$seatId": {
+            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && $seatId.matches(/^s(0[1-9]|1[0-5])$/) && !data.exists() && !data.parent().parent().child('seats').child($seatId).exists() && newData.parent().parent().child('seats').child($seatId).child('uid').val() === auth.uid",
+            ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}$/)"
+          }
+        },
+        "claims": {
+          "$seatId": {
+            ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && $seatId.matches(/^s(0[1-9]|1[0-5])$/) && data.parent().parent().child('seats').child($seatId).exists() && newData.child('uid').val() === auth.uid && (!data.parent().parent().child('members').child(auth.uid).exists() || data.parent().parent().child('seats').child(data.parent().parent().child('members').child(auth.uid).val()).child('uid').val() !== auth.uid) && (!data.exists() || now >= data.child('at').val() + 2000)",
+            ".validate": "newData.hasChildren(['uid', 'pin', 'at'])",
+            "uid": {
+              ".validate": "newData.isString()"
+            },
+            "pin": {
+              ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}$/)"
+            },
+            "at": {
+              ".validate": "newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
       }
     }
   }

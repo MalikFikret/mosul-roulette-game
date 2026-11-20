@@ -1,83 +1,26 @@
 // Room creation and joining: the client module (src/rooms/) and the security rules
-// (database.rules.json), on the local emulator.
+// (database.rules.json), on the local emulator. PINs and recovery: recovery.test.js.
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { get, ref, serverTimestamp, update } from 'firebase/database';
 import { defaultConfig } from '../src/engine/index.js';
-import { ROOM_ERR, SEAT_IDS, createRoomApi, isValidRoomCode, toDbValue } from '../src/rooms/index.js';
+import { ROOM_ERR, SEAT_IDS, isValidRoomCode, toDbValue } from '../src/rooms/index.js';
 import { useRulesTestEnv } from './helpers.js';
+import { ARABIC_20, CODE, PIN, rejectsWithCode, roomFixtures } from './fixtures.js';
 
 const rt = useRulesTestEnv();
-
-// Server timestamp placeholder, as the SDK sends it.
-const NOW = { '.sv': 'timestamp' };
-const CODE = 'ABC234';
-const ARABIC_20 = 'محمد'.repeat(5);
-
-function roomsApi(uid, extra = {}) {
-  return createRoomApi({ db: rt.modularDb(uid), ref, get, update, serverTimestamp, ...extra });
-}
-
-async function rejectsWithCode(promise, code) {
-  await assert.rejects(promise, (error) => {
-    assert.equal(error.code, code);
-    return true;
-  });
-}
-
-// Everything stored under rooms/{code}, read with rules disabled.
-async function dumpRoom(code = CODE) {
-  return rt.withRulesDisabled(async (db) => (await db.ref(`rooms/${code}`).get()).val());
-}
-
-// The multi-path update that creates a room, as a raw client would send it.
-function creationUpdate(uid, { code = CODE, mode = 'classic', meta = {}, seat = {}, seatId = 's01' } = {}) {
-  return {
-    [`rooms/${code}/meta`]: {
-      visibility: 'private',
-      mode,
-      status: 'lobby',
-      hostSeat: 's01',
-      createdAt: NOW,
-      ...meta,
-    },
-    [`rooms/${code}/settings`]: toDbValue(defaultConfig(mode)),
-    [`rooms/${code}/seats/${seatId}`]: { uid, name: 'Host', joinedAt: NOW, ...seat },
-    [`rooms/${code}/members/${uid}`]: seatId,
-  };
-}
-
-// The multi-path update that takes a seat, as a raw client would send it.
-function joinUpdate(uid, seatId, { code = CODE, seat = {}, memberSeat = seatId } = {}) {
-  return {
-    [`rooms/${code}/seats/${seatId}`]: { uid, name: 'Player', joinedAt: NOW, ...seat },
-    [`rooms/${code}/members/${uid}`]: memberSeat,
-  };
-}
-
-function write(db, values) {
-  return db.ref().update(values);
-}
-
-// Creates room CODE with "host" in s01 and the given uids in s02, s03, ... (through the rules).
-async function seedRoom(joiners = []) {
-  await write(rt.userDb('host'), creationUpdate('host'));
-  for (const [i, uid] of joiners.entries()) {
-    await write(rt.userDb(uid), joinUpdate(uid, SEAT_IDS[i + 1]));
-  }
-}
+const { roomsApi, dumpRoom, creationUpdate, joinUpdate, write, seedRoom } = roomFixtures(rt);
 
 describe('rooms module: createRoom', () => {
   for (const mode of ['classic', 'custom']) {
     test(`creating a ${mode} room: creator is s01 and host, settings are the engine defaults`, async () => {
-      const result = await roomsApi('alice').createRoom({ uid: 'alice', name: '  Alice ', visibility: 'public', mode });
+      const result = await roomsApi('alice').createRoom({ pin: PIN, uid: 'alice', name: '  Alice ', visibility: 'public', mode });
       assert.equal(result.seatId, 's01');
       assert.ok(isValidRoomCode(result.code));
 
       const room = await dumpRoom(result.code);
-      assert.deepEqual(Object.keys(room).sort(), ['members', 'meta', 'seats', 'settings']);
+      assert.deepEqual(Object.keys(room).sort(), ['members', 'meta', 'seats', 'secrets', 'settings']);
       assert.equal(room.meta.visibility, 'public');
       assert.equal(room.meta.mode, mode);
       assert.equal(room.meta.status, 'lobby');
@@ -87,6 +30,7 @@ describe('rooms module: createRoom', () => {
       assert.deepEqual(room.seats, { s01: { uid: 'alice', name: 'Alice', joinedAt: room.seats.s01.joinedAt } });
       assert.equal(typeof room.seats.s01.joinedAt, 'number');
       assert.deepEqual(room.members, { alice: 's01' });
+      assert.deepEqual(room.secrets, { s01: PIN });
       assert.deepEqual(room.settings, toDbValue(defaultConfig(mode)));
     });
   }
@@ -95,7 +39,7 @@ describe('rooms module: createRoom', () => {
     await seedRoom();
     const codes = [CODE, 'XYZ789'];
     const api = roomsApi('alice', { generateCode: () => codes.shift() });
-    const result = await api.createRoom({ uid: 'alice', name: 'Alice', visibility: 'private', mode: 'classic' });
+    const result = await api.createRoom({ pin: PIN, uid: 'alice', name: 'Alice', visibility: 'private', mode: 'classic' });
     assert.equal(result.code, 'XYZ789');
     assert.equal((await dumpRoom(CODE)).members.alice, undefined);
   });
@@ -105,7 +49,7 @@ describe('rooms module: createRoom', () => {
     let calls = 0;
     const api = roomsApi('alice', { generateCode: () => (calls += 1, CODE), maxCodeAttempts: 3 });
     await rejectsWithCode(
-      api.createRoom({ uid: 'alice', name: 'Alice', visibility: 'private', mode: 'classic' }),
+      api.createRoom({ pin: PIN, uid: 'alice', name: 'Alice', visibility: 'private', mode: 'classic' }),
       ROOM_ERR.CODE_GENERATION_FAILED,
     );
     assert.equal(calls, 3);
@@ -113,7 +57,7 @@ describe('rooms module: createRoom', () => {
 
   test('createRoom validates its input before writing', async () => {
     const api = roomsApi('alice');
-    const ok = { uid: 'alice', name: 'Alice', visibility: 'private', mode: 'classic' };
+    const ok = { uid: 'alice', name: 'Alice', pin: PIN, visibility: 'private', mode: 'classic' };
     await rejectsWithCode(api.createRoom({ ...ok, name: '   ' }), ROOM_ERR.INVALID_NAME);
     await rejectsWithCode(api.createRoom({ ...ok, name: 'x'.repeat(21) }), ROOM_ERR.INVALID_NAME);
     await rejectsWithCode(api.createRoom({ ...ok, name: 'two\nlines' }), ROOM_ERR.INVALID_NAME);
@@ -126,20 +70,20 @@ describe('rooms module: createRoom', () => {
   test('a uid that is not the signed-in user is refused by the rules (WRITE_DENIED)', async () => {
     const api = roomsApi('alice');
     await rejectsWithCode(
-      api.createRoom({ uid: 'mallory', name: 'M', visibility: 'private', mode: 'classic' }),
+      api.createRoom({ pin: PIN, uid: 'mallory', name: 'M', visibility: 'private', mode: 'classic' }),
       ROOM_ERR.WRITE_DENIED,
     );
   });
 
   test('createRoom accepts a 20-character Arabic name', async () => {
-    const { code } = await roomsApi('alice').createRoom({ uid: 'alice', name: ARABIC_20, visibility: 'private', mode: 'custom' });
+    const { code } = await roomsApi('alice').createRoom({ pin: PIN, uid: 'alice', name: ARABIC_20, visibility: 'private', mode: 'custom' });
     assert.equal((await dumpRoom(code)).seats.s01.name, ARABIC_20);
   });
 });
 
 describe('rooms module: joinRoom', () => {
   async function createAs(uid = 'host') {
-    const { code } = await roomsApi(uid).createRoom({ uid, name: 'Host', visibility: 'private', mode: 'classic' });
+    const { code } = await roomsApi(uid).createRoom({ uid, pin: PIN, name: 'Host', visibility: 'private', mode: 'classic' });
     return code;
   }
 
@@ -148,11 +92,11 @@ describe('rooms module: joinRoom', () => {
     const seats = ['s01'];
     for (let i = 2; i <= 15; i += 1) {
       const uid = `user${i}`;
-      const { seatId } = await roomsApi(uid).joinRoom({ uid, code, name: `Player ${i}` });
+      const { seatId } = await roomsApi(uid).joinRoom({ uid, pin: PIN, code, name: `Player ${i}` });
       seats.push(seatId);
     }
     assert.deepEqual(seats, SEAT_IDS);
-    await rejectsWithCode(roomsApi('late').joinRoom({ uid: 'late', code, name: 'Late' }), ROOM_ERR.ROOM_FULL);
+    await rejectsWithCode(roomsApi('late').joinRoom({ pin: PIN, uid: 'late', code, name: 'Late' }), ROOM_ERR.ROOM_FULL);
 
     const room = await dumpRoom(code);
     assert.equal(Object.keys(room.seats).length, 15);
@@ -165,7 +109,7 @@ describe('rooms module: joinRoom', () => {
     const code = await createAs('host');
     const uids = Array.from({ length: 14 }, (_, i) => `racer${i}`);
     const results = await Promise.all(
-      uids.map((uid) => roomsApi(uid).joinRoom({ uid, code, name: uid })),
+      uids.map((uid) => roomsApi(uid).joinRoom({ uid, pin: PIN, code, name: uid })),
     );
     const seats = results.map((r) => r.seatId);
     assert.equal(new Set(seats).size, 14);
@@ -183,7 +127,7 @@ describe('rooms module: joinRoom', () => {
     const code = await createAs('host');
     const uids = Array.from({ length: 15 }, (_, i) => `racer${i}`);
     const results = await Promise.allSettled(
-      uids.map((uid) => roomsApi(uid).joinRoom({ uid, code, name: uid })),
+      uids.map((uid) => roomsApi(uid).joinRoom({ uid, pin: PIN, code, name: uid })),
     );
     const seated = results.filter((r) => r.status === 'fulfilled').map((r) => r.value.seatId);
     const refused = results.filter((r) => r.status === 'rejected');
@@ -199,37 +143,37 @@ describe('rooms module: joinRoom', () => {
 
   test('re-joining with the same uid returns the same seat and writes nothing', async () => {
     const code = await createAs('host');
-    const first = await roomsApi('bob').joinRoom({ uid: 'bob', code, name: 'Bob' });
+    const first = await roomsApi('bob').joinRoom({ pin: PIN, uid: 'bob', code, name: 'Bob' });
     const before = await dumpRoom(code);
-    const again = await roomsApi('bob').joinRoom({ uid: 'bob', code, name: 'Another name' });
-    const host = await roomsApi('host').joinRoom({ uid: 'host', code, name: 'Host' });
+    const again = await roomsApi('bob').joinRoom({ pin: PIN, uid: 'bob', code, name: 'Another name' });
+    const host = await roomsApi('host').joinRoom({ pin: PIN, uid: 'host', code, name: 'Host' });
     assert.equal(again.seatId, first.seatId);
     assert.equal(host.seatId, 's01');
     assert.deepEqual(await dumpRoom(code), before);
   });
 
   test('joining a room that does not exist -> ROOM_NOT_FOUND', async () => {
-    await rejectsWithCode(roomsApi('bob').joinRoom({ uid: 'bob', code: 'ZZZ999', name: 'Bob' }), ROOM_ERR.ROOM_NOT_FOUND);
+    await rejectsWithCode(roomsApi('bob').joinRoom({ pin: PIN, uid: 'bob', code: 'ZZZ999', name: 'Bob' }), ROOM_ERR.ROOM_NOT_FOUND);
     assert.equal(await dumpRoom('ZZZ999'), null);
   });
 
   test('a typed code is trimmed and upper-cased; a malformed code -> INVALID_CODE', async () => {
     const code = await createAs('host');
-    const { seatId } = await roomsApi('bob').joinRoom({ uid: 'bob', code: ` ${code.toLowerCase()} `, name: 'Bob' });
+    const { seatId } = await roomsApi('bob').joinRoom({ pin: PIN, uid: 'bob', code: ` ${code.toLowerCase()} `, name: 'Bob' });
     assert.equal(seatId, 's02');
     for (const bad of ['ABC23', 'ABC2345', 'ABC230', 'ABCO23', 'ABC123', 'ABCI23', 'ABCL23', 'AB-234', 42, null]) {
-      await rejectsWithCode(roomsApi('carol').joinRoom({ uid: 'carol', code: bad, name: 'Carol' }), ROOM_ERR.INVALID_CODE);
+      await rejectsWithCode(roomsApi('carol').joinRoom({ pin: PIN, uid: 'carol', code: bad, name: 'Carol' }), ROOM_ERR.INVALID_CODE);
     }
   });
 
   test('joinRoom validates name and uid on the client too', async () => {
     const code = await createAs('host');
     const api = roomsApi('bob');
-    await rejectsWithCode(api.joinRoom({ uid: 'bob', code, name: '' }), ROOM_ERR.INVALID_NAME);
-    await rejectsWithCode(api.joinRoom({ uid: 'bob', code, name: 'y'.repeat(21) }), ROOM_ERR.INVALID_NAME);
-    await rejectsWithCode(api.joinRoom({ uid: 'bob', code, name: 42 }), ROOM_ERR.INVALID_NAME);
-    await rejectsWithCode(api.joinRoom({ uid: 'b.b', code, name: 'Bob' }), ROOM_ERR.INVALID_UID);
-    const { seatId } = await api.joinRoom({ uid: 'bob', code, name: 'y'.repeat(20) });
+    await rejectsWithCode(api.joinRoom({ pin: PIN, uid: 'bob', code, name: '' }), ROOM_ERR.INVALID_NAME);
+    await rejectsWithCode(api.joinRoom({ pin: PIN, uid: 'bob', code, name: 'y'.repeat(21) }), ROOM_ERR.INVALID_NAME);
+    await rejectsWithCode(api.joinRoom({ pin: PIN, uid: 'bob', code, name: 42 }), ROOM_ERR.INVALID_NAME);
+    await rejectsWithCode(api.joinRoom({ pin: PIN, uid: 'b.b', code, name: 'Bob' }), ROOM_ERR.INVALID_UID);
+    const { seatId } = await api.joinRoom({ pin: PIN, uid: 'bob', code, name: 'y'.repeat(20) });
     assert.equal(seatId, 's02');
   });
 });
@@ -308,7 +252,7 @@ describe('rules: creating a room', () => {
   });
 
   test('no extra children of the room, and no write of the whole room node', async () => {
-    const extra = { ...creationUpdate('alice'), [`rooms/${CODE}/secrets`]: { x: 1 } };
+    const extra = { ...creationUpdate('alice'), [`rooms/${CODE}/presence`]: { x: 1 } };
     await assertFails(write(rt.userDb('alice'), extra));
     const parts = creationUpdate('alice');
     const whole = {
@@ -434,10 +378,11 @@ describe('rules: reading a room', () => {
     await assertSucceeds(carol.ref('rooms/ZZZ999/meta').get());
   });
 
-  test('a non-member cannot read settings, seats or other members entries', async () => {
+  test('a non-member cannot read settings, seats (other than names) or other members entries', async () => {
     await seedRoom(['bob']);
     const carol = rt.userDb('carol');
-    for (const path of ['settings', 'seats', 'seats/s01', 'seats/s01/name', 'members', 'members/bob']) {
+    const paths = ['settings', 'seats', 'seats/s01', 'seats/s01/uid', 'seats/s01/joinedAt', 'members', 'members/bob'];
+    for (const path of paths) {
       await assertFails(carol.ref(`rooms/${CODE}/${path}`).get());
     }
   });

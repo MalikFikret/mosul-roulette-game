@@ -5,10 +5,16 @@
 //   settings: the engine's default config for the mode (stored without null fields)
 //   seats/{seatId}:  { uid, name, joinedAt: <server time> }
 //   members/{uid}:   seatId
+//   secrets/{seatId}: "1234"   the seat's 4-digit PIN, readable by nobody
+//   claims/{seatId}:  { uid, pin, at: <server time> }   latest recovery attempt, readable by nobody
+//
+// A user is a member only if members/{uid} exists AND seats/{that seat}/uid is that uid. After a
+// recovery moves a seat to a new device, the old device's members entry is stale and grants
+// nothing.
 //
 // Seat ids are exactly s01..s15. The fixed set enforces the player limit, because security
-// rules cannot count children. Later steps add more children of rooms/{CODE} (secrets,
-// presence, match, ...) next to these ones.
+// rules cannot count children. Later steps add more children of rooms/{CODE} (presence,
+// waiting flag, match, ...) next to these ones.
 
 import { MAX_PLAYERS, MODES } from '../engine/index.js';
 
@@ -28,6 +34,18 @@ export const NAME_MAX = 20;
 // Firebase anonymous uids are short alphanumeric strings. The uid is also used as a database
 // key, so characters that are illegal in keys or would change the path are refused.
 const UID_PATTERN = /^[^.#$[\]/\s]{1,128}$/;
+
+// A seat PIN is exactly 4 ASCII digits, as a string. Weak PINs (0000, 1234) are allowed on
+// purpose. No trimming: " 1234" is not a PIN.
+const PIN_PATTERN = /^[0-9]{4}$/;
+
+/**
+ * @param {unknown} pin
+ * @returns {boolean} true if `pin` is a string of exactly 4 digits 0-9
+ */
+export function isValidPin(pin) {
+  return typeof pin === 'string' && PIN_PATTERN.test(pin);
+}
 
 export function isValidUid(uid) {
   return typeof uid === 'string' && UID_PATTERN.test(uid);
@@ -72,6 +90,10 @@ export const paths = Object.freeze({
   settings: (code) => `rooms/${code}/settings`,
   seats: (code) => `rooms/${code}/seats`,
   seat: (code, seatId) => `rooms/${code}/seats/${seatId}`,
+  seatName: (code, seatId) => `rooms/${code}/seats/${seatId}/name`,
+  seatUid: (code, seatId) => `rooms/${code}/seats/${seatId}/uid`,
   members: (code) => `rooms/${code}/members`,
   member: (code, uid) => `rooms/${code}/members/${uid}`,
+  secret: (code, seatId) => `rooms/${code}/secrets/${seatId}`,
+  claim: (code, seatId) => `rooms/${code}/claims/${seatId}`,
 });
