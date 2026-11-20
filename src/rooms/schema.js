@@ -1,7 +1,7 @@
 // Shape of a room in the Realtime Database, shared by the client module and its tests.
 //
 // rooms/{CODE}/
-//   meta:     { visibility, mode, status: "lobby", hostSeat: "s01", createdAt: <server time> }
+//   meta:     { visibility, mode, status: "lobby" | "playing", hostSeat: "s01", createdAt: <server time> }
 //   settings: the engine's default config for the mode (stored without null fields)
 //   seats/{seatId}:  { uid, name, joinedAt: <server time> }
 //   members/{uid}:   seatId
@@ -19,9 +19,11 @@
 // recovery moves a seat to a new device, the old device's members entry is stale and grants
 // nothing. A kicked seat is deleted together with its members entries.
 //
+//   match:    { n, seq, stateJson, log: { [seq]: eventsJson } }   members read; see match-helpers.js
+//
 // Seat ids are exactly s01..s15. The fixed set enforces the player limit, because security
 // rules cannot count children. Later steps add more children of rooms/{CODE} (waiting
-// flag, match, ...) next to these ones.
+// flag, ...) next to these ones.
 
 import { MAX_PLAYERS, MODES } from '../engine/index.js';
 
@@ -29,6 +31,7 @@ export const VISIBILITIES = Object.freeze(['public', 'private']);
 export const ROOM_MODES = MODES;
 export const HOST_SEAT = 's01';
 export const LOBBY_STATUS = 'lobby';
+export const PLAYING_STATUS = 'playing';
 
 /** Seat ids in join order: s01, s02, ..., s15. */
 export const SEAT_IDS = Object.freeze(
@@ -118,6 +121,9 @@ export const paths = Object.freeze({
   seatUid: (code, seatId) => `rooms/${code}/seats/${seatId}/uid`,
   seatJoinedAt: (code, seatId) => `rooms/${code}/seats/${seatId}/joinedAt`,
   hostSeat: (code) => `rooms/${code}/meta/hostSeat`,
+  metaStatus: (code) => `rooms/${code}/meta/status`,
+  match: (code) => `rooms/${code}/match`,
+  matchN: (code) => `rooms/${code}/match/n`,
   presence: (code) => `rooms/${code}/presence`,
   presenceSeat: (code, seatId) => `rooms/${code}/presence/${seatId}`,
   presenceConns: (code, seatId) => `rooms/${code}/presence/${seatId}/conns`,

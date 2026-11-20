@@ -2,7 +2,7 @@
 // bypassing src/rooms/), seeding, and a room API bound to a signed-in test user.
 
 import assert from 'node:assert/strict';
-import { get, onDisconnect, onValue, ref, serverTimestamp, update } from 'firebase/database';
+import { get, onDisconnect, onValue, ref, runTransaction, serverTimestamp, update } from 'firebase/database';
 import { defaultConfig } from '../src/engine/index.js';
 import { SEAT_IDS, createRoomApi, toDbValue } from '../src/rooms/index.js';
 
@@ -60,7 +60,7 @@ export function roomFixtures(rt) {
   // goOffline in tests).
   function liveRoomsApi(uid, extra = {}) {
     const db = rt.modularDb(uid);
-    return { db, api: createRoomApi({ db, ref, get, update, serverTimestamp, onValue, onDisconnect, ...extra }) };
+    return { db, api: createRoomApi({ db, ref, get, update, serverTimestamp, onValue, onDisconnect, runTransaction, ...extra }) };
   }
 
   // Everything stored under rooms/{code}, read with rules disabled.

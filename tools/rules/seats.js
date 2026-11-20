@@ -36,6 +36,8 @@ const CREATE_SEAT = all(
   '!data.exists()',
   "newData.child('uid').val() === auth.uid",
   `${newRoom}.child('meta').exists()`,
+  // No new seat while a match runs (temporary, until waiting players come in task 3.5c).
+  `${newRoom}.child('meta/status').val() === 'lobby'`,
   `${newRoom}.child('secrets').child($seatId).exists()`,
   `${newRoom}.child('members').child(auth.uid).val() === $seatId`,
   isNotMember(ROOM_BEFORE),

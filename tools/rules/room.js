@@ -6,6 +6,7 @@
 
 import { CODE_OK, REFUSE, SEAT_IDS, SIGNED_IN, all, either, isMember, memberEntry } from './helpers.js';
 import { claimsRules } from './claims.js';
+import { matchRules } from './match.js';
 import { membersRules } from './members.js';
 import { metaRules } from './meta.js';
 import { namesRules } from './names.js';
@@ -40,6 +41,7 @@ export function roomRules() {
     claims: claimsRules(),
     presence: presenceRules(),
     names: namesRules(),
+    match: matchRules(),
     $other: REFUSE,
   };
 }

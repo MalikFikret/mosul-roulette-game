@@ -44,6 +44,9 @@ export const BOOLEAN = { '.validate': 'newData.isBoolean()' };
 /** The room before the write, from any rule below rooms/$code. */
 export const ROOM_BEFORE = "root.child('rooms').child($code)";
 
+/** The room after the write, from a node one level below it (e.g. settings, match). */
+export const NEW_ROOM_FROM_DEPTH_1 = 'newData.parent()';
+
 /** The room after the write, from a node two levels below it (e.g. seats/$seatId, secrets/$seatId). */
 export const NEW_ROOM_FROM_DEPTH_2 = 'newData.parent().parent()';
 
@@ -71,6 +74,9 @@ export const sitsOn = (room, seat) =>
   `${memberEntry(room)}.val() === ${seat} && ${room}.child('seats').child(${seat}).child('uid').val() === auth.uid`;
 
 // --- Leaving (between matches only) ------------------------------------------------------------
+
+/** meta.status before the write: 'lobby' between matches, 'playing' while a match runs. */
+export const STATUS_BEFORE = `${ROOM_BEFORE}.child('meta/status').val()`;
 
 /** The room is in the lobby (no match running), before the write. */
 export const IN_LOBBY = `${ROOM_BEFORE}.child('meta/status').val() === 'lobby'`;

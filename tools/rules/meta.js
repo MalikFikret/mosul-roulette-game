@@ -4,6 +4,8 @@
 
 import {
   CODE_OK,
+  IS_HOST,
+  NEW_ROOM_FROM_DEPTH_2,
   REFUSE,
   ROOM_BEFORE,
   SIGNED_IN,
@@ -63,7 +65,21 @@ export function metaRules() {
     '.validate': "newData.hasChildren(['visibility', 'mode', 'status', 'hostSeat', 'createdAt'])",
     visibility: { '.validate': "newData.val() === 'public' || newData.val() === 'private'" },
     mode: { '.validate': "newData.val() === 'classic' || newData.val() === 'custom'" },
-    status: { '.validate': "newData.val() === 'lobby'" },
+    status: {
+      // 'lobby' -> 'playing' only: the host, in the same write that starts a new match (match/seq
+      // is 0 and match/n is new). Back to 'lobby' is not possible yet (task 3.5b).
+      '.write': all(
+        SIGNED_IN,
+        CODE_OK,
+        "data.val() === 'lobby'",
+        "newData.val() === 'playing'",
+        IS_HOST,
+        `${NEW_ROOM_FROM_DEPTH_2}.child('match/seq').val() === 0`,
+        either(`!${ROOM_BEFORE}.child('match').exists()`, `${NEW_ROOM_FROM_DEPTH_2}.child('match/n').val() !== ${ROOM_BEFORE}.child('match/n').val()`),
+      ),
+      // A new room starts in the lobby.
+      '.validate': anyOf("newData.val() === 'lobby'", all("newData.val() === 'playing'", `${ROOM_BEFORE}.exists()`)),
+    },
     hostSeat: {
       '.write': HOST_SEAT_WRITE,
       // At creation the host is s01; afterwards any seat id.

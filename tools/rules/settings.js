@@ -17,6 +17,8 @@ export function settingsRules() {
       `!${ROOM_BEFORE}.exists()`,
       "newData.parent().child('meta').exists()",
       "newData.parent().child('members').child(auth.uid).val() === 's01'",
+      // Settings change only between matches.
+      "newData.parent().child('meta/status').val() === 'lobby'",
     ),
     // The custom block exists exactly in custom mode.
     '.validate':

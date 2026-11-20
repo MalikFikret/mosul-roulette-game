@@ -20,9 +20,12 @@ import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
 import { createPresenceFunctions } from './presence.js';
 import { createLeaveFunction } from './leave.js';
 import { createManageFunctions } from './manage.js';
+import { createMatchFunctions } from './match.js';
+import { createTrafficCounter } from './match-helpers.js';
 import {
   HOST_SEAT,
   LOBBY_STATUS,
+  PLAYING_STATUS,
   ROOM_MODES,
   SEAT_IDS,
   VISIBILITIES,
@@ -46,6 +49,8 @@ const DEFAULT_MAX_CODE_ATTEMPTS = 10;
  * @property {() => object} serverTimestamp     firebase/database `serverTimestamp`
  * @property {Function} [onValue]               firebase/database `onValue` (presence and host only)
  * @property {Function} [onDisconnect]          firebase/database `onDisconnect` (startPresence only)
+ * @property {Function} [runTransaction]        firebase/database `runTransaction` (submitAction only)
+ * @property {() => number} [randomSeed]        32-bit match seed source (default: crypto.getRandomValues)
  * @property {() => string} [generateCode]      room code source (default: generateRoomCode)
  * @property {number} [maxCodeAttempts]         codes to try before CODE_GENERATION_FAILED (default 10)
  * @property {() => string} [newConnId]         presence connection id source (default: random)
@@ -210,8 +215,10 @@ export function createRoomApi(deps) {
    *   `code` may be typed in lower case or with surrounding spaces;
    *   `pin`: the player's personal seat PIN, exactly 4 digits as a string
    * @returns {Promise<{ seatId: string }>}
+   * A new seat cannot be taken while a match is running (MATCH_RUNNING); a member still gets
+   * their seat back.
    * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_NAME, INVALID_PIN, ROOM_NOT_FOUND
-   *   (also when the room was deleted while trying seats), NAME_TAKEN (another seat has this
+   *   (also when the room was deleted while trying seats), MATCH_RUNNING, NAME_TAKEN (another seat has this
    *   name, compared case-insensitively; also when another device took it while joining),
    *   ROOM_FULL
    */
@@ -224,6 +231,10 @@ export function createRoomApi(deps) {
 
     const existing = await currentSeat(roomCode, uid);
     if (existing !== null) return { seatId: existing };
+    // Temporary until waiting players come (task 3.5c): no new seat during a match.
+    if ((await read(paths.metaStatus(roomCode))) === PLAYING_STATUS) {
+      throw new RoomError(ROOM_ERR.MATCH_RUNNING, `a match is running in room ${roomCode}`);
+    }
     if (await nameTaken(roomCode, playerName)) {
       throw new RoomError(ROOM_ERR.NAME_TAKEN, `the name is already used in room ${roomCode}`);
     }
@@ -359,6 +370,19 @@ export function createRoomApi(deps) {
     nameTaken,
   });
 
+  const traffic = createTrafficCounter();
+  const matchFunctions = createMatchFunctions({
+    deps,
+    db,
+    ref,
+    read,
+    writeAll,
+    requireUid,
+    requireCode,
+    currentSeat,
+    traffic,
+  });
+
   const leaveRoom = createLeaveFunction({
     deps,
     read,
@@ -369,5 +393,15 @@ export function createRoomApi(deps) {
     stopLiveFor,
   });
 
-  return { createRoom, joinRoom, listSeatNames, recoverSeat, ...presenceFunctions, leaveRoom, renameSeat, kickSeat };
+  return {
+    createRoom,
+    joinRoom,
+    listSeatNames,
+    recoverSeat,
+    ...presenceFunctions,
+    leaveRoom,
+    renameSeat,
+    kickSeat,
+    ...matchFunctions,
+  };
 }
