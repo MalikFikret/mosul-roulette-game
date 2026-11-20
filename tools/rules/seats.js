@@ -15,6 +15,7 @@ import {
   REFUSE,
   ROOM_BEFORE,
   SIGNED_IN,
+  STATUS_BEFORE,
   all,
   anyOf,
   either,
@@ -31,13 +32,18 @@ import {
 const newRoom = NEW_ROOM_FROM_DEPTH_2;
 
 // Taking a seat: an empty seat, for yourself, in an existing room, by a non-member, with your
-// members entry and the seat's secret (PIN) in the same write.
+// members entry and the seat's secret (PIN) in the same write. During a match the new seat is a
+// waiting seat (waiting: true, decision Q18); in the lobby it has no waiting flag.
+const newStatus = `${newRoom}.child('meta/status').val()`;
+const WAITING_FLAG = anyOf(
+  all(`${newStatus} === 'lobby'`, "!newData.hasChild('waiting')"),
+  all(`${newStatus} === 'playing'`, "newData.child('waiting').val() === true"),
+);
 const CREATE_SEAT = all(
   '!data.exists()',
   "newData.child('uid').val() === auth.uid",
   `${newRoom}.child('meta').exists()`,
-  // No new seat while a match runs (temporary, until waiting players come in task 3.5c).
-  `${newRoom}.child('meta/status').val() === 'lobby'`,
+  WAITING_FLAG,
   `${newRoom}.child('secrets').child($seatId).exists()`,
   `${newRoom}.child('members').child(auth.uid).val() === $seatId`,
   isNotMember(ROOM_BEFORE),
@@ -80,6 +86,19 @@ const RENAME = all(
     `${nameKey('data.val()')} === ${nameKey('newData.val()')}`,
     `!${newRoomFromName}.child('names').child(${nameKey('data.val()')}).exists()`,
   ),
+);
+
+// The waiting flag goes only in the host's startMatch write (status 'lobby' before, 'playing'
+// after: the meta/status rule allows that only together with a new match). It is never set later.
+const CLEAR_WAITING = all(
+  SIGNED_IN,
+  CODE_OK,
+  isSeatId('$seatId'),
+  'data.exists()',
+  '!newData.exists()',
+  IS_HOST,
+  `${STATUS_BEFORE} === 'lobby'`,
+  `${NEW_ROOM_FROM_DEPTH_3}.child('meta/status').val() === 'playing'`,
 );
 
 // A name: 1-20 characters, no space at either end, none of the characters illegal in keys, and
@@ -127,6 +146,10 @@ export function seatsRules() {
         '.validate': NAME_VALID,
       },
       joinedAt: { '.validate': 'newData.val() === now' },
+      waiting: {
+        '.write': CLEAR_WAITING,
+        '.validate': 'newData.val() === true',
+      },
       $other: REFUSE,
     },
   };

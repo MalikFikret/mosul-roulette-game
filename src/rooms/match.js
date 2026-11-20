@@ -24,7 +24,7 @@ import { MAX_PLAYERS, MIN_PLAYERS, applyAction, createMatch, eventsFor, validate
 import { createClockRunner } from './clock.js';
 import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
 import { isSeatPresent } from './host.js';
-import { buildPlayers, buildResult, computeSessionScores, eventsSince, parseLog, playerIdIn } from './match-helpers.js';
+import { buildPlayers, buildResult, computeSessionScores, eventsSince, legalActionsFor, parseLog, playerIdIn } from './match-helpers.js';
 import { LOBBY_STATUS, PLAYING_STATUS, paths } from './schema.js';
 
 // Only removeAbsentPlayer (host, absent seat) may send this one; submitAction refuses it.
@@ -87,8 +87,9 @@ export function createMatchFunctions(ctx) {
 
   /**
    * The host starts a match between matches. The players are all seated seats (present or
-   * absent), sorted by seat id; the settings are checked with the engine's validateConfig. One
-   * update sets meta.status to 'playing' and writes match = { n, seq: 0, stateJson, log: { 0 } }.
+   * absent, waiting ones included: decision Q37), sorted by seat id; the settings are checked with
+   * the engine's validateConfig. One update sets meta.status to 'playing', writes
+   * match = { n, seq: 0, stateJson, log: { 0 }, clockAt } and clears every waiting flag.
    * @param {{ uid: string, code: string }} input
    * @returns {Promise<{ n: number, players: string[] }>}
    * @throws {RoomError} INVALID_UID, INVALID_CODE, ROOM_NOT_FOUND, NOT_IN_LOBBY (a match is
@@ -103,7 +104,8 @@ export function createMatchFunctions(ctx) {
     const mySeat = await requireOwnSeat(roomCode, uid);
     if (meta.hostSeat !== mySeat) throw new RoomError(ROOM_ERR.WRITE_DENIED, 'only the host can start a match');
 
-    const players = buildPlayers(await read(paths.seats(roomCode)));
+    const seats = await read(paths.seats(roomCode));
+    const players = buildPlayers(seats);
     if (players.length < MIN_PLAYERS || players.length > MAX_PLAYERS) {
       throw new RoomError(ROOM_ERR.NOT_ENOUGH_PLAYERS, `a match needs ${MIN_PLAYERS} to ${MAX_PLAYERS} seated players`);
     }
@@ -133,6 +135,10 @@ export function createMatchFunctions(ctx) {
         clockAt: serverTimestamp(),
       },
     };
+    // Waiting seats (taken during the last match) play from now on: their flag goes.
+    for (const p of players) {
+      if (seats[p.id]?.waiting === true) values[paths.seatWaiting(roomCode, p.id)] = null;
+    }
     traffic.addWritten(values);
     try {
       await writeAll(values);
@@ -421,9 +427,12 @@ export function createMatchFunctions(ctx) {
 
   /**
    * Watches the match as the caller's seat sees it. Every change delivers
-   * { n, seq, view, events, initial }: `view` is viewFor(state, mySeat) (the spectator view for a
-   * member who is not a player of this match), `events` the new log entries since the previous
-   * delivery as eventsFor lets that seat see them. The first delivery of a match (the first one,
+   * { n, seq, view, events, legalActions, clockAt, initial }: `view` is viewFor(state, mySeat)
+   * (the spectator view for a member who is not a player of this match, e.g. a waiting seat),
+   * `events` the new log entries since the previous delivery as eventsFor lets that seat see them,
+   * `legalActions` the engine's legal actions of the caller's seat only ([] for a spectator),
+   * `clockAt` the server time the current countdown started (deadline: clockAt +
+   * view.config.shotTimeSeconds * 1000). The first delivery of a match (the first one,
    * or after a new match started) has initial: true and all of its log entries. Nothing is
    * delivered while the room has no match.
    * @param {{ uid: string, code: string, onUpdate: (update: object) => void, onError?: (error: unknown) => void }} input
@@ -465,6 +474,8 @@ export function createMatchFunctions(ctx) {
             seq: value.seq,
             view: viewFor(state, playerId),
             events: eventsSince(parseLog(value.log), initial ? -1 : lastSeq, playerId),
+            legalActions: legalActionsFor(state, playerId),
+            clockAt: value.clockAt,
             initial,
           };
           lastN = value.n;

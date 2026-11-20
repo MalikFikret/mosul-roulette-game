@@ -12,7 +12,7 @@
 //
 // rooms/{CODE}/results/{n} = { scoreJson, joinedAt: { [seatId]: number } }: the result of match n.
 
-import { DEFAULT_SCORING, addMatchToSession, createSession, eventsFor, scoreMatch } from '../engine/index.js';
+import { DEFAULT_SCORING, addMatchToSession, createSession, eventsFor, listLegalActions, scoreMatch } from '../engine/index.js';
 import { isSeatId } from './schema.js';
 
 /**
@@ -78,6 +78,21 @@ export function eventsSince(entries, afterSeq, playerId) {
 export function playerIdIn(state, seatId) {
   if (seatId === null || !Array.isArray(state?.players)) return null;
   return state.players.some((p) => p.id === seatId) ? seatId : null;
+}
+
+// Actions only the layer sends (the clock, the host's removal), never offered to a player.
+const SYSTEM_ACTIONS = ['timeout', 'removePlayer'];
+
+/**
+ * The legal actions of one seat right now (engine listLegalActions), for a UI to offer. Only
+ * actions of that seat: none for a spectator (null) or for another seat, and no system actions.
+ * @param {object} state the match state
+ * @param {string | null} playerId the caller's player id in this match (playerIdIn)
+ * @returns {object[]}
+ */
+export function legalActionsFor(state, playerId) {
+  if (playerId === null || state?.status === 'ended') return [];
+  return listLegalActions(state, playerId).filter((a) => a.playerId === playerId && !SYSTEM_ACTIONS.includes(a.type));
 }
 
 /** Approximate size of a value as sent or received: the length of its JSON text. */

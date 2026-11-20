@@ -9,6 +9,7 @@ export {
   createTrafficCounter,
   eventsSince,
   jsonSize,
+  legalActionsFor,
   parseLog,
   playerIdIn,
 } from './match-helpers.js';

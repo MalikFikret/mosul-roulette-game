@@ -312,7 +312,8 @@ describe('watchMatch', () => {
         assert.equal(d.stateJson, undefined);
         assert.equal(d.state, undefined);
         assert.equal(d.log, undefined);
-        assert.deepEqual(Object.keys(d).sort(), ['events', 'initial', 'n', 'seq', 'view']);
+        assert.deepEqual(Object.keys(d).sort(), ['clockAt', 'events', 'initial', 'legalActions', 'n', 'seq', 'view']);
+        for (const action of d.legalActions) assert.equal(action.playerId, 's02');
         // Another seat's hand is not in bob's view.
         for (const p of d.view.players) assert.equal(p.hand, undefined);
       }
@@ -374,10 +375,11 @@ describe('watchMatch', () => {
 });
 
 describe('the room during a match', () => {
-  test('joinRoom is refused (API and rules); recoverSeat still works', async () => {
+  test('joinRoom gives a waiting seat (a seat without the flag is refused); recoverSeat still works', async () => {
     await startedRoom();
-    await rejectsWithCode(roomsApi('eve').joinRoom({ uid: 'eve', code: CODE, name: 'Eve', pin: PIN }), ROOM_ERR.MATCH_RUNNING);
+    // Since task 3.5c a new seat during a match is a waiting seat (more in waiting.test.js).
     await assertFails(write(rt.userDb('eve'), joinUpdate('eve', 's04', { name: 'Eve' })));
+    assert.deepEqual(await roomsApi('eve').joinRoom({ uid: 'eve', code: CODE, name: 'Eve', pin: PIN }), { seatId: 's04', waiting: true });
     // A member asking again still gets their seat back.
     assert.deepEqual(await roomsApi('bob').joinRoom({ uid: 'bob', code: CODE, name: 'bob', pin: PIN }), { seatId: 's02' });
     assert.deepEqual(await roomsApi('bob2').recoverSeat({ uid: 'bob2', code: CODE, seatId: 's02', pin: seedPin(1) }), { seatId: 's02' });

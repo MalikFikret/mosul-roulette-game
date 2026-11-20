@@ -3,7 +3,8 @@
 // rooms/{CODE}/
 //   meta:     { visibility, mode, status: "lobby" | "playing", hostSeat: "s01", createdAt: <server time> }
 //   settings: the engine's default config for the mode (stored without null fields)
-//   seats/{seatId}:  { uid, name, joinedAt: <server time> }
+//   seats/{seatId}:  { uid, name, joinedAt: <server time>, waiting?: true }   waiting: taken during
+//                      a match; a spectator until the next startMatch clears it
 //   members/{uid}:   seatId
 //   secrets/{seatId}: "1234"   the seat's 4-digit PIN, readable by nobody
 //   claims/{seatId}:  { uid, pin, at: <server time> }   latest recovery attempt, readable by nobody
@@ -121,6 +122,7 @@ export const paths = Object.freeze({
   seatName: (code, seatId) => `rooms/${code}/seats/${seatId}/name`,
   seatUid: (code, seatId) => `rooms/${code}/seats/${seatId}/uid`,
   seatJoinedAt: (code, seatId) => `rooms/${code}/seats/${seatId}/joinedAt`,
+  seatWaiting: (code, seatId) => `rooms/${code}/seats/${seatId}/waiting`,
   hostSeat: (code) => `rooms/${code}/meta/hostSeat`,
   metaStatus: (code) => `rooms/${code}/meta/status`,
   match: (code) => `rooms/${code}/match`,

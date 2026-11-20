@@ -65,3 +65,34 @@ test('room match: traffic counters add JSON lengths and reset', () => {
   assert.equal(jsonSize(undefined), 0);
   assert.equal(jsonSize('محمد'), 6);
 });
+
+test('room match: legalActionsFor only ever offers the caller\'s own seat actions', async () => {
+  const { applyAction, createMatch: start, listLegalActions } = await import('../src/engine/index.js');
+  const { legalActionsFor } = await import('../src/rooms/index.js');
+  const seats = ['s01', 's02', 's03', 's04'];
+  for (const mode of ['classic', 'custom']) {
+    let { state } = start({ mode }, seats.map((id) => ({ id })), 4242);
+    for (let step = 0; step < 80 && state.status !== 'ended'; step += 1) {
+      for (const seat of seats) {
+        const offered = legalActionsFor(state, seat);
+        for (const action of offered) {
+          assert.equal(action.playerId, seat, `${mode}: ${JSON.stringify(action)} offered to ${seat}`);
+          assert.ok(!['timeout', 'removePlayer'].includes(action.type));
+        }
+        // Exactly the engine's list for that seat (minus system actions).
+        assert.equal(offered.length, listLegalActions(state, seat).filter((a) => a.playerId === seat).length);
+      }
+      assert.deepEqual(legalActionsFor(state, null), [], 'a spectator gets no actions');
+      // Move on: a real action if any seat has one, else let the clock run out.
+      const actor = seats.find((s) => legalActionsFor(state, s).some((a) => a.type !== 'setPreference' && a.type !== 'chooseTarget'));
+      const action = actor ? legalActionsFor(state, actor).find((a) => a.type !== 'setPreference' && a.type !== 'chooseTarget') : { type: 'timeout', seq: state.clock.seq };
+      const next = applyAction(state, action);
+      state = next.ok ? next.state : applyAction(state, { type: 'timeout', seq: state.clock.seq }).state;
+    }
+  }
+});
+
+test('room match: waiting seats are players of the next match', () => {
+  const seats = { s01: seat('a'), s02: { ...seat('b'), waiting: true }, s03: seat('c') };
+  assert.deepEqual(buildPlayers(seats), [{ id: 's01' }, { id: 's02' }, { id: 's03' }]);
+});

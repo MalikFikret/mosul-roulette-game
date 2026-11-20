@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rooms test page (dev)</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 12px; font-size: 14px; }
+  fieldset { margin: 8px 0; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #999; padding: 2px 6px; text-align: left; }
+  pre { background: #f4f4f4; padding: 6px; max-height: 420px; overflow: auto; }
+  #traffic { position: fixed; top: 4px; right: 8px; background: #ffe; border: 1px solid #cc9; padding: 4px; font-size: 12px; }
+  #log, #events { max-height: 220px; overflow: auto; font-family: monospace; font-size: 12px; }
+  #actions button { margin: 2px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>Rooms test page <small>(developer tool, local emulators only)</small></h1>
+<div id="traffic">traffic: -</div>
+<p id="who">Signing in...</p>
+
+<fieldset id="entry">
+  <legend>Enter a room</legend>
+  <label>Name <input id="name" value="" maxlength="20"></label>
+  <label>PIN <input id="pin" value="1234" maxlength="4" size="4"></label>
+  <br>
+  <label>Mode <select id="mode"><option>classic</option><option>custom</option></select></label>
+  <label>Visibility <select id="visibility"><option>private</option><option>public</option></select></label>
+  <button id="create">Create room</button>
+  <br>
+  <label>Code <input id="code" size="8"></label>
+  <button id="join">Join</button>
+  <button id="listNames">List seats (to recover)</button>
+  <select id="recoverSeat"></select>
+  <button id="recover">Recover seat with PIN</button>
+</fieldset>
+
+<fieldset id="room" class="hidden">
+  <legend>Room <b id="roomCode"></b> - my seat <b id="mySeat"></b> - status <b id="status"></b></legend>
+  <table>
+    <thead><tr><th>seat</th><th>name</th><th>host</th><th>present</th><th>waiting</th><th>points</th><th>host actions</th></tr></thead>
+    <tbody id="seats"></tbody>
+  </table>
+  <p>
+    <button id="start">Start match (host)</button>
+    <button id="leave">Leave room</button>
+    <label>Rename my seat <input id="newName" maxlength="20"></label><button id="rename">Rename</button>
+  </p>
+</fieldset>
+
+<fieldset id="match" class="hidden">
+  <legend>Match <b id="matchN"></b> (seq <span id="matchSeq"></span>) - clock: <b id="countdown">-</b></legend>
+  <div>My legal actions:</div>
+  <div id="actions"></div>
+  <details open><summary>My view</summary><pre id="view"></pre></details>
+  <details open><summary>My events</summary><ol id="events"></ol></details>
+</fieldset>
+
+<fieldset>
+  <legend>Log</legend>
+  <ol id="log"></ol>
+</fieldset>
+
+<script type="module" src="./rooms.js"></script>
+</body>
+</html>

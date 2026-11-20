@@ -125,9 +125,12 @@ export function createRoomApi(deps) {
   }
 
   // The seat, members entry, secret and names entry of a newly taken seat, written in one update.
-  function seatTakeValues(code, seatId, uid, name, pin) {
+  // A seat taken while a match runs is a waiting seat (waiting: true) until the next startMatch.
+  function seatTakeValues(code, seatId, uid, name, pin, waiting = false) {
+    const seat = { uid, name, joinedAt: serverTimestamp() };
+    if (waiting) seat.waiting = true;
     return {
-      [paths.seat(code, seatId)]: { uid, name, joinedAt: serverTimestamp() },
+      [paths.seat(code, seatId)]: seat,
       [paths.member(code, uid)]: seatId,
       [paths.secret(code, seatId)]: pin,
       [paths.name(code, nameKey(name))]: seatId,
@@ -215,11 +218,12 @@ export function createRoomApi(deps) {
    * @param {{ uid: string, code: string, name: string, pin: string }} input
    *   `code` may be typed in lower case or with surrounding spaces;
    *   `pin`: the player's personal seat PIN, exactly 4 digits as a string
-   * @returns {Promise<{ seatId: string }>}
-   * A new seat cannot be taken while a match is running (MATCH_RUNNING); a member still gets
-   * their seat back.
+   * A seat taken while a match is running is a waiting seat (waiting: true, decision Q18): the
+   * player watches as a spectator and plays from the next match on. A member still gets their
+   * own seat back (also during a match), never a waiting one.
+   * @returns {Promise<{ seatId: string, waiting?: true }>}
    * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_NAME, INVALID_PIN, ROOM_NOT_FOUND
-   *   (also when the room was deleted while trying seats), MATCH_RUNNING, NAME_TAKEN (another seat has this
+   *   (also when the room was deleted while trying seats), NAME_TAKEN (another seat has this
    *   name, compared case-insensitively; also when another device took it while joining),
    *   ROOM_FULL
    */
@@ -232,10 +236,7 @@ export function createRoomApi(deps) {
 
     const existing = await currentSeat(roomCode, uid);
     if (existing !== null) return { seatId: existing };
-    // Temporary until waiting players come (task 3.5c): no new seat during a match.
-    if ((await read(paths.metaStatus(roomCode))) === PLAYING_STATUS) {
-      throw new RoomError(ROOM_ERR.MATCH_RUNNING, `a match is running in room ${roomCode}`);
-    }
+    let waiting = (await read(paths.metaStatus(roomCode))) === PLAYING_STATUS;
     if (await nameTaken(roomCode, playerName)) {
       throw new RoomError(ROOM_ERR.NAME_TAKEN, `the name is already used in room ${roomCode}`);
     }
@@ -243,15 +244,23 @@ export function createRoomApi(deps) {
     // A non-member cannot read who sits where, so try each seat: the rules refuse a seat that
     // is taken, and seat, members entry, secret and names entry are written in one atomic
     // update, so two players can never end up on the same seat or with the same name.
-    for (const seatId of SEAT_IDS) {
+    // The rules require waiting: true exactly while a match runs.
+    for (let i = 0; i < SEAT_IDS.length; i += 1) {
+      const seatId = SEAT_IDS[i];
       try {
-        await writeAll(seatTakeValues(roomCode, seatId, uid, playerName, pin));
-        return { seatId };
+        await writeAll(seatTakeValues(roomCode, seatId, uid, playerName, pin, waiting));
+        return waiting ? { seatId, waiting: true } : { seatId };
       } catch (error) {
         if (!isPermissionDenied(error)) throw error;
         // Refused because another device took the name meanwhile, not because of the seat.
         if (await nameTaken(roomCode, playerName)) {
           throw new RoomError(ROOM_ERR.NAME_TAKEN, `the name is already used in room ${roomCode}`, error);
+        }
+        // A match started or ended meanwhile: try the same seat again with the right flag.
+        const nowWaiting = (await read(paths.metaStatus(roomCode))) === PLAYING_STATUS;
+        if (nowWaiting !== waiting) {
+          waiting = nowWaiting;
+          i -= 1;
         }
       }
     }
