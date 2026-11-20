@@ -9,10 +9,15 @@
 //   claims/{seatId}:  { uid, pin, at: <server time> }   latest recovery attempt, readable by nobody
 //   presence/{seatId}: { conns: { [connId]: true }, lastSeenAt: <server time> }   members read;
 //                      present <=> conns has a child; written only by the seat's own member
+//   names/{key}:      seatId   unique-name index, key = the seat's name in lower case; readable
+//                      by any signed-in user. A seat's name exists only if names/{its key} is that
+//                      seat, an entry exists only for a seat whose name has that key, and an entry
+//                      is never overwritten with another seat: names are unique per room,
+//                      case-insensitive. Written / deleted in the same update as the seat or name.
 //
 // A user is a member only if members/{uid} exists AND seats/{that seat}/uid is that uid. After a
 // recovery moves a seat to a new device, the old device's members entry is stale and grants
-// nothing.
+// nothing. A kicked seat is deleted together with its members entries.
 //
 // Seat ids are exactly s01..s15. The fixed set enforces the player limit, because security
 // rules cannot count children. Later steps add more children of rooms/{CODE} (waiting
@@ -57,9 +62,14 @@ export function isSeatId(seatId) {
   return typeof seatId === 'string' && SEAT_IDS.includes(seatId);
 }
 
+// Characters that are illegal in database keys: a name is also a key in names/, so they are
+// refused in names (the rules refuse them too).
+const NAME_FORBIDDEN = /[.$#[\]/]/;
+
 /**
  * Trims a display name and checks the same limits as the security rules
- * (1-20 characters after trimming; length counted in UTF-16 units, as the rules do).
+ * (1-20 characters after trimming; length counted in UTF-16 units, as the rules do; none of
+ * . $ # [ ] / ; no control characters).
  * @param {unknown} name
  * @returns {string | null} the trimmed name, or null if it is not allowed
  */
@@ -69,7 +79,19 @@ export function normalizeName(name) {
   if (trimmed.length < NAME_MIN || trimmed.length > NAME_MAX) return null;
   // The rules refuse line breaks and other control characters anywhere in a name.
   if (/[\u0000-\u001f\u007f]/.test(trimmed)) return null;
+  if (NAME_FORBIDDEN.test(trimmed)) return null;
   return trimmed;
+}
+
+/**
+ * The key of a (normalized) name in names/: the name in lower case. The rules compute the same
+ * key with their own toLowerCase(); an emulator test checks that both agree for Turkish, Arabic,
+ * accented Latin and emoji names.
+ * @param {string} name a name returned by normalizeName
+ * @returns {string}
+ */
+export function nameKey(name) {
+  return name.toLowerCase();
 }
 
 // The Realtime Database does not store null: a null field is simply absent. Settings are
@@ -105,4 +127,6 @@ export const paths = Object.freeze({
   member: (code, uid) => `rooms/${code}/members/${uid}`,
   secret: (code, seatId) => `rooms/${code}/secrets/${seatId}`,
   claim: (code, seatId) => `rooms/${code}/claims/${seatId}`,
+  names: (code) => `rooms/${code}/names`,
+  name: (code, key) => `rooms/${code}/names/${key}`,
 });

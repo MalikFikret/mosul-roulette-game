@@ -9,11 +9,13 @@ import {
   SIGNED_IN,
   all,
   anyOf,
+  deletedByKick,
   deletedWithOwnSeat,
   isSeatId,
 } from './helpers.js';
 
-// Written only together with the creation of its seat by the same user; never changed.
+// Written only together with the creation of its seat by the same user; never changed; deleted
+// only with its seat (leaving or kicking).
 const CREATE_WITH_SEAT = all(
   '!data.exists()',
   `!${ROOM_BEFORE}.child('seats').child($seatId).exists()`,
@@ -27,7 +29,11 @@ export function secretsRules() {
         SIGNED_IN,
         CODE_OK,
         isSeatId('$seatId'),
-        anyOf(CREATE_WITH_SEAT, deletedWithOwnSeat('$seatId', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`)),
+        anyOf(
+          CREATE_WITH_SEAT,
+          deletedWithOwnSeat('$seatId', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`),
+          deletedByKick('$seatId', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`),
+        ),
       ),
       '.validate': `newData.isString() && newData.val().matches(${PIN_PATTERN})`,
     },

@@ -10,6 +10,8 @@ import {
   ROOM_BEFORE,
   SIGNED_IN,
   all,
+  anyOf,
+  deletedByKick,
   deletedWithOwnSeat,
   isMember,
   isSeatId,
@@ -22,9 +24,15 @@ export function presenceRules() {
   return {
     '.read': all(SIGNED_IN, isMember(ROOM_BEFORE)),
     $seatId: {
-      // Leaving: the whole entry goes with your own seat. Requires the entry to be gone after the
-      // write, so this grant never covers anything else below it.
-      '.write': all(OWN_SEAT, deletedWithOwnSeat('$seatId', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`)),
+      // Leaving or kicking: the whole entry goes with its seat. Requires the entry to be gone
+      // after the write, so this grant never covers anything else below it.
+      '.write': all(
+        OWN_SEAT,
+        anyOf(
+          deletedWithOwnSeat('$seatId', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`),
+          deletedByKick('$seatId', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`),
+        ),
+      ),
       conns: {
         '.write': all(OWN_SEAT, sitsOn(ROOM_BEFORE, '$seatId')),
         '.validate': 'newData.hasChildren()',

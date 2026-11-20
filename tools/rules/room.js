@@ -8,6 +8,7 @@ import { CODE_OK, REFUSE, SEAT_IDS, SIGNED_IN, all, either, isMember, memberEntr
 import { claimsRules } from './claims.js';
 import { membersRules } from './members.js';
 import { metaRules } from './meta.js';
+import { namesRules } from './names.js';
 import { presenceRules } from './presence.js';
 import { seatsRules } from './seats.js';
 import { secretsRules } from './secrets.js';
@@ -38,6 +39,7 @@ export function roomRules() {
     secrets: secretsRules(),
     claims: claimsRules(),
     presence: presenceRules(),
+    names: namesRules(),
     $other: REFUSE,
   };
 }

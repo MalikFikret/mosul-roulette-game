@@ -16,6 +16,7 @@ export {
   isSeatId,
   isValidPin,
   isValidUid,
+  nameKey,
   normalizeName,
   paths,
   toDbValue,

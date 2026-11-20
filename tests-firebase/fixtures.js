@@ -23,6 +23,19 @@ export async function rejectsWithCode(promise, code) {
   });
 }
 
+// The names/ key a raw client would write for `name`: its lower case, or null when the name
+// cannot be a database key at all (not a string, empty, or a character illegal in keys); raw
+// updates then leave the names entry out (the rules refuse such a name anyway).
+export function rawNameKey(name) {
+  if (typeof name !== 'string' || name.length === 0 || /[.$#[\]/\u0000-\u001f\u007f]/.test(name)) return null;
+  return name.toLowerCase();
+}
+
+// Default names for raw joins: unique per call, so two raw joins never collide on the name
+// unless a test asks for it.
+let rawNameCounter = 0;
+const nextRawName = () => `Player ${(rawNameCounter += 1)}`;
+
 export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Polls `check` until it returns a truthy value (returned) or the timeout passes (throws).
@@ -55,8 +68,15 @@ export function roomFixtures(rt) {
     return rt.withRulesDisabled(async (db) => (await db.ref(`rooms/${code}`).get()).val());
   }
 
-  // The multi-path update that creates a room.
+  // The names entry of a raw update: names/{key} = seatId (left out if the name is not a key).
+  function nameEntry(code, name, seatId, nameKeyOverride) {
+    const key = nameKeyOverride === undefined ? rawNameKey(name) : nameKeyOverride;
+    return key === null ? {} : { [`rooms/${code}/names/${key}`]: seatId };
+  }
+
+  // The multi-path update that creates a room (with the names entry of the host's name).
   function creationUpdate(uid, { code = CODE, mode = 'classic', meta = {}, seat = {}, seatId = 's01', pin = HOST_PIN } = {}) {
+    const seatValue = { uid, name: 'Host', joinedAt: NOW, ...seat };
     return {
       [`rooms/${code}/meta`]: {
         visibility: 'private',
@@ -67,18 +87,22 @@ export function roomFixtures(rt) {
         ...meta,
       },
       [`rooms/${code}/settings`]: toDbValue(defaultConfig(mode)),
-      [`rooms/${code}/seats/${seatId}`]: { uid, name: 'Host', joinedAt: NOW, ...seat },
+      [`rooms/${code}/seats/${seatId}`]: seatValue,
       [`rooms/${code}/members/${uid}`]: seatId,
       [`rooms/${code}/secrets/${seatId}`]: pin,
+      ...nameEntry(code, seatValue.name, seatId),
     };
   }
 
-  // The multi-path update that takes a seat.
-  function joinUpdate(uid, seatId, { code = CODE, seat = {}, memberSeat = seatId, pin = PIN, name = 'Player' } = {}) {
+  // The multi-path update that takes a seat (with the names entry of the seat's name, unless
+  // `nameKey` overrides it; `nameKey: null` leaves the entry out).
+  function joinUpdate(uid, seatId, { code = CODE, seat = {}, memberSeat = seatId, pin = PIN, name = nextRawName(), nameKey } = {}) {
+    const seatValue = { uid, name, joinedAt: NOW, ...seat };
     return {
-      [`rooms/${code}/seats/${seatId}`]: { uid, name, joinedAt: NOW, ...seat },
+      [`rooms/${code}/seats/${seatId}`]: seatValue,
       [`rooms/${code}/members/${uid}`]: memberSeat,
       [`rooms/${code}/secrets/${seatId}`]: pin,
+      ...nameEntry(code, seatValue.name, seatId, nameKey),
     };
   }
 

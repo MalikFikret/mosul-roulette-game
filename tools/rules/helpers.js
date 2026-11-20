@@ -84,3 +84,33 @@ export const leaver = (seat) => `${sitsOn(ROOM_BEFORE, seat)} && ${IN_LOBBY}`;
  * seats node after the write). So no secret / claim / presence / members entry outlives a seat.
  */
 export const deletedWithOwnSeat = (seat, newSeats) => all('!newData.exists()', leaver(seat), `!${newSeats}.child(${seat}).exists()`);
+
+// --- The host and kicking (between matches only) -----------------------------------------------
+
+/** The host seat before the write. */
+export const HOST_SEAT_BEFORE = `${ROOM_BEFORE}.child('meta/hostSeat').val()`;
+
+/** The writer is the host: a valid member sitting on meta.hostSeat, before the write. */
+export const IS_HOST = sitsOn(ROOM_BEFORE, HOST_SEAT_BEFORE);
+
+/** The writer is the host kicking `seat`: not the host's own seat, and the room is in the lobby. */
+export const kicker = (seat) => all(IS_HOST, `${seat} !== ${HOST_SEAT_BEFORE}`, IN_LOBBY);
+
+/**
+ * A node that belongs to `seat` is deleted while the host kicks that seat: the node is gone, the
+ * writer may kick the seat, and the seat itself is gone after the same write.
+ */
+export const deletedByKick = (seat, newSeats) => all('!newData.exists()', kicker(seat), `!${newSeats}.child(${seat}).exists()`);
+
+// --- Unique names --------------------------------------------------------------------------------
+// names/{key} = seatId, key = the seat's name in lower case (String.toLowerCase() in the rules
+// and in JavaScript agree for every name we tested, Turkish dotted / dotless i included). These
+// characters are illegal in database keys, so they are refused in names.
+
+export const NAME_KEY_FORBIDDEN = ['.', '$', '#', '[', ']', '/'];
+
+/** The key in names/ of a name expression. */
+export const nameKey = (name) => `${name}.toLowerCase()`;
+
+/** The name expression contains none of the characters that are illegal in keys. */
+export const noForbiddenKeyChars = (name) => all(...NAME_KEY_FORBIDDEN.map((ch) => `!${name}.contains('${ch}')`));

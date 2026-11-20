@@ -20,7 +20,7 @@ describe('rooms module: createRoom', () => {
       assert.ok(isValidRoomCode(result.code));
 
       const room = await dumpRoom(result.code);
-      assert.deepEqual(Object.keys(room).sort(), ['members', 'meta', 'seats', 'secrets', 'settings']);
+      assert.deepEqual(Object.keys(room).sort(), ['members', 'meta', 'names', 'seats', 'secrets', 'settings']);
       assert.equal(room.meta.visibility, 'public');
       assert.equal(room.meta.mode, mode);
       assert.equal(room.meta.status, 'lobby');
@@ -31,6 +31,7 @@ describe('rooms module: createRoom', () => {
       assert.equal(typeof room.seats.s01.joinedAt, 'number');
       assert.deepEqual(room.members, { alice: 's01' });
       assert.deepEqual(room.secrets, { s01: PIN });
+      assert.deepEqual(room.names, { alice: 's01' });
       assert.deepEqual(room.settings, toDbValue(defaultConfig(mode)));
     });
   }

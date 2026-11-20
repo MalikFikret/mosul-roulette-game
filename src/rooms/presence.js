@@ -146,6 +146,9 @@ export function createPresenceFunctions(ctx) {
    * adds its connection. Each call uses its own connection id, so two tabs keep the seat
    * present until both are closed. Errors (for example after the seat was recovered on
    * another device) go to `onError`; they are never thrown from the listener.
+   * If the seat stops belonging to this device while it runs (recovered on another device, or
+   * kicked by the host), it stops by itself: no more writes, its onDisconnect handlers are
+   * cancelled, and `onError` receives one RoomError SEAT_LOST.
    * @param {{ uid: string, code: string, seatId: string, onError?: (error: unknown) => void }} input
    * @returns {() => Promise<void>} stop(): removes this connection, stamps lastSeenAt and stops
    *   listening
@@ -172,6 +175,35 @@ export function createPresenceFunctions(ctx) {
     };
     let stopped = false;
 
+    const release = () => {
+      forgetLive(db, roomCode, stop);
+      unsubscribe();
+      if (unwatchSeat) unwatchSeat();
+      const left = (holders.get(seenPath) ?? 1) - 1;
+      if (left > 0) holders.set(seenPath, left);
+      else holders.delete(seenPath);
+      return left;
+    };
+
+    // The seat is lost: stop without writing (the rules refuse a non-member's presence writes),
+    // cancel the server-side cleanup so it is not refused again at disconnect time, and report
+    // SEAT_LOST once.
+    let unwatchSeat = null;
+    let lostBeforeWatching = false;
+    function lose(cause) {
+      if (stopped) return;
+      stopped = true;
+      if (unwatchSeat === null) lostBeforeWatching = true;
+      const left = release();
+      chain = chain
+        .then(async () => {
+          await deps.onDisconnect(ref(db, connPath)).cancel();
+          if (left === 0) await deps.onDisconnect(ref(db, seenPath)).cancel();
+        })
+        .catch(() => {});
+      report(new RoomError(ROOM_ERR.SEAT_LOST, `seat ${seatId} in room ${roomCode} no longer belongs to this device`, cause));
+    }
+
     const unsubscribe = deps.onValue(
       ref(db, '.info/connected'),
       (snapshot) => {
@@ -189,15 +221,23 @@ export function createPresenceFunctions(ctx) {
       report,
     );
 
+    // Only a valid member can read seats/{seatId}/uid: the value changes when the seat is
+    // recovered on another device, and the listener is cancelled when the seat is deleted.
+    const stopWatchingSeat = deps.onValue(
+      ref(db, paths.seatUid(roomCode, seatId)),
+      (snapshot) => {
+        if (snapshot.val() !== uid) lose(undefined);
+      },
+      (error) => lose(error),
+    );
+    unwatchSeat = stopWatchingSeat;
+    if (lostBeforeWatching) stopWatchingSeat();
+
     const live = liveSetFor(db, roomCode);
     function stop() {
       if (stopped) return chain;
       stopped = true;
-      forgetLive(db, roomCode, stop);
-      unsubscribe();
-      const left = (holders.get(seenPath) ?? 1) - 1;
-      if (left > 0) holders.set(seenPath, left);
-      else holders.delete(seenPath);
+      const left = release();
       return enqueue(async () => {
         await deps.onDisconnect(ref(db, connPath)).cancel();
         if (left === 0) await deps.onDisconnect(ref(db, seenPath)).cancel();
@@ -258,6 +298,8 @@ export function createPresenceFunctions(ctx) {
    * tryTakeOverHost for absent-since + 60 s + a margin + a random jitter (server time,
    * through .info/serverTimeOffset); cancels or reschedules when the host returns or the host
    * changes. Never throws from a listener: errors go to `onError`, results to `onResult`.
+   * If this device has or loses no seat in the room (kicked, recovered elsewhere), it stops by
+   * itself and reports one RoomError: SEAT_LOST (had a seat) or NOT_MEMBER (never had one).
    * @param {{ uid: string, code: string, scores?: Record<string, number>,
    *   onError?: (error: unknown) => void,
    *   onResult?: (result: { moved: boolean, hostSeat: string, reason?: string }) => void }} input
@@ -338,10 +380,24 @@ export function createPresenceFunctions(ctx) {
         hostSeat = snapshot.val();
         evaluate();
       }, report),
-      deps.onValue(ref(db, paths.presence(roomCode)), (snapshot) => {
-        presence = snapshot.val() ?? {};
-        evaluate();
-      }, report),
+      deps.onValue(
+        ref(db, paths.presence(roomCode)),
+        (snapshot) => {
+          presence = snapshot.val() ?? {};
+          evaluate();
+        },
+        // Presence is members-only: a refused listener means this device has no seat (any more).
+        // Stop watching and report once: SEAT_LOST if it was a member, else NOT_MEMBER.
+        (error) => {
+          const wasMember = presence !== undefined;
+          stop();
+          report(
+            wasMember
+              ? new RoomError(ROOM_ERR.SEAT_LOST, `this device no longer has a seat in room ${roomCode}`, error)
+              : new RoomError(ROOM_ERR.NOT_MEMBER, `only a member of room ${roomCode} can watch the host`, error),
+          );
+        },
+      ),
     ];
 
     function stop() {

@@ -15,14 +15,17 @@ const { roomsApi, liveRoomsApi, seedPresence, dumpRoom, joinUpdate, claimUpdate,
 const BOB_PIN = seedPin(1); // bob sits in s02, carol in s03, dave in s04
 const present = () => ({ conns: { seeded: true }, lastSeenAt: Date.now() - 5000 });
 
-// The five deletions of a leave, as a raw client would send them.
-function leaveUpdate(uid, seatId, extra = {}) {
+// The deletions of a leave, as a raw client would send them. `nameKey` is the names entry of
+// the seat's name: in seedRoom rooms the host is "Host" and every joiner is named after their
+// uid, so it defaults to the uid in lower case.
+function leaveUpdate(uid, seatId, extra = {}, nameKey = uid.toLowerCase()) {
   return {
     [`rooms/${CODE}/seats/${seatId}`]: null,
     [`rooms/${CODE}/secrets/${seatId}`]: null,
     [`rooms/${CODE}/claims/${seatId}`]: null,
     [`rooms/${CODE}/presence/${seatId}`]: null,
     [`rooms/${CODE}/members/${uid}`]: null,
+    [`rooms/${CODE}/names/${nameKey}`]: null,
     ...extra,
   };
 }
@@ -35,6 +38,10 @@ const setStatus = (status) => rt.withRulesDisabled((db) => db.ref(`rooms/${CODE}
 // that now has another uid, but never to a missing one).
 function assertValidRoom(room) {
   assert.ok(room.seats?.[room.meta.hostSeat], `hostSeat ${room.meta.hostSeat} points to a missing seat`);
+  // Names: one entry per seat, under the seat's name in lower case, and nothing else.
+  const expectedNames = {};
+  for (const [seatId, seat] of Object.entries(room.seats)) expectedNames[seat.name.toLowerCase()] = seatId;
+  assert.deepEqual(room.names ?? {}, expectedNames, 'names index out of sync with the seats');
   for (const branch of ['secrets', 'claims', 'presence']) {
     for (const seatId of Object.keys(room[branch] ?? {})) assert.ok(room.seats[seatId], `orphan ${branch}/${seatId}`);
   }
@@ -43,7 +50,7 @@ function assertValidRoom(room) {
 }
 
 describe('leaveRoom (module)', () => {
-  test('an ordinary player leaves: all five nodes are gone, the rest is untouched, hostSeat unchanged', async () => {
+  test('an ordinary player leaves: all its nodes are gone (names entry included), the rest is untouched, hostSeat unchanged', async () => {
     await seedRoom(['bob', 'carol']);
     await write(rt.userDb('dave'), claimUpdate('dave', 's02', '0000'));
     await seedPresence({ s01: present(), s02: present(), s03: present() });
@@ -59,6 +66,7 @@ describe('leaveRoom (module)', () => {
     delete expected.claims;
     delete expected.presence.s02;
     delete expected.members.bob;
+    delete expected.names.bob;
     assert.deepEqual(after, expected);
     assertValidRoom(after);
   });
@@ -172,7 +180,9 @@ describe('rules: leaving', () => {
     await seedPresence({ s02: present() });
     for (const uid of ['carol', 'host']) {
       const db = rt.userDb(uid);
-      await assertFails(write(db, leaveUpdate('bob', 's02')));
+      // For the host, deleting all of bob's nodes together is a kick (allowed since kickSeat,
+      // tested in names-manage.test.js); every partial deletion below stays refused.
+      if (uid !== 'host') await assertFails(write(db, leaveUpdate('bob', 's02')));
       for (const path of ['seats/s02', 'secrets/s02', 'claims/s02', 'presence/s02', 'members/bob', 'seats/s02/uid']) {
         await assertFails(db.ref(`rooms/${CODE}/${path}`).remove());
       }

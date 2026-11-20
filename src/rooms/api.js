@@ -19,6 +19,7 @@ import { generateRoomCode, normalizeRoomCode } from './code.js';
 import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
 import { createPresenceFunctions } from './presence.js';
 import { createLeaveFunction } from './leave.js';
+import { createManageFunctions } from './manage.js';
 import {
   HOST_SEAT,
   LOBBY_STATUS,
@@ -28,6 +29,7 @@ import {
   isSeatId,
   isValidPin,
   isValidUid,
+  nameKey,
   normalizeName,
   paths,
   toDbValue,
@@ -55,7 +57,7 @@ const DEFAULT_MAX_CODE_ATTEMPTS = 10;
 
 /**
  * Creates the room API bound to one database instance. The original five deps are enough for
- * createRoom, joinRoom, listSeatNames, recoverSeat and leaveRoom; presence and host functions also need
+ * createRoom, joinRoom, listSeatNames, recoverSeat, leaveRoom, renameSeat and kickSeat; presence and host functions also need
  * onValue (and onDisconnect for startPresence) and throw INVALID_DEPENDENCIES without them.
  * @param {RoomApiDeps} deps
  */
@@ -116,13 +118,20 @@ export function createRoomApi(deps) {
     }
   }
 
-  // The seat, members entry and secret of a newly taken seat, written in one update.
+  // The seat, members entry, secret and names entry of a newly taken seat, written in one update.
   function seatTakeValues(code, seatId, uid, name, pin) {
     return {
       [paths.seat(code, seatId)]: { uid, name, joinedAt: serverTimestamp() },
       [paths.member(code, uid)]: seatId,
       [paths.secret(code, seatId)]: pin,
+      [paths.name(code, nameKey(name))]: seatId,
     };
+  }
+
+  // True if another seat already holds this name (any case) in the room.
+  async function nameTaken(code, name, ownSeatId = null) {
+    const holder = await read(paths.name(code, nameKey(name)));
+    return holder !== null && holder !== ownSeatId;
   }
 
   // The seat this uid really holds, or null. A members entry whose seat now belongs to another
@@ -202,7 +211,9 @@ export function createRoomApi(deps) {
    *   `pin`: the player's personal seat PIN, exactly 4 digits as a string
    * @returns {Promise<{ seatId: string }>}
    * @throws {RoomError} INVALID_UID, INVALID_CODE, INVALID_NAME, INVALID_PIN, ROOM_NOT_FOUND
-   *   (also when the room was deleted while trying seats), ROOM_FULL
+   *   (also when the room was deleted while trying seats), NAME_TAKEN (another seat has this
+   *   name, compared case-insensitively; also when another device took it while joining),
+   *   ROOM_FULL
    */
   async function joinRoom({ uid, code, name, pin } = {}) {
     requireUid(uid);
@@ -213,16 +224,23 @@ export function createRoomApi(deps) {
 
     const existing = await currentSeat(roomCode, uid);
     if (existing !== null) return { seatId: existing };
+    if (await nameTaken(roomCode, playerName)) {
+      throw new RoomError(ROOM_ERR.NAME_TAKEN, `the name is already used in room ${roomCode}`);
+    }
 
     // A non-member cannot read who sits where, so try each seat: the rules refuse a seat that
-    // is taken, and seat, members entry and secret are written in one atomic update, so two
-    // players can never end up on the same seat.
+    // is taken, and seat, members entry, secret and names entry are written in one atomic
+    // update, so two players can never end up on the same seat or with the same name.
     for (const seatId of SEAT_IDS) {
       try {
         await writeAll(seatTakeValues(roomCode, seatId, uid, playerName, pin));
         return { seatId };
       } catch (error) {
         if (!isPermissionDenied(error)) throw error;
+        // Refused because another device took the name meanwhile, not because of the seat.
+        if (await nameTaken(roomCode, playerName)) {
+          throw new RoomError(ROOM_ERR.NAME_TAKEN, `the name is already used in room ${roomCode}`, error);
+        }
       }
     }
 
@@ -330,6 +348,17 @@ export function createRoomApi(deps) {
     requireRoom,
   });
 
+  const { renameSeat, kickSeat } = createManageFunctions({
+    read,
+    writeAll,
+    requireUid,
+    requireCode,
+    requireSeat,
+    requireName,
+    currentSeat,
+    nameTaken,
+  });
+
   const leaveRoom = createLeaveFunction({
     deps,
     read,
@@ -340,5 +369,5 @@ export function createRoomApi(deps) {
     stopLiveFor,
   });
 
-  return { createRoom, joinRoom, listSeatNames, recoverSeat, ...presenceFunctions, leaveRoom };
+  return { createRoom, joinRoom, listSeatNames, recoverSeat, ...presenceFunctions, leaveRoom, renameSeat, kickSeat };
 }

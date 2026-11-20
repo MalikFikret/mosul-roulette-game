@@ -1,8 +1,9 @@
 // Leaving a room between matches (meta.status === 'lobby').
 //
-// - An ordinary player deletes, in one atomic update, their seat, its secret, claim and
-//   presence entry, their members entry, and stale members entries of their old devices that
-//   still point to this seat (recovery leaves those behind). The seat becomes free.
+// - An ordinary player deletes, in one atomic update, their seat, its secret, claim, presence
+//   entry and names entry, their members entry, and stale members entries of their old devices
+//   that still point to this seat (recovery leaves those behind). The seat and the name become
+//   free.
 // - The host does the same and, in the same update, moves meta.hostSeat to another seat:
 //   a present one if any, otherwise any other occupied seat (chooseNewHost, random for now).
 // - The only seated player deletes the whole room in one write.
@@ -13,7 +14,7 @@
 
 import { chooseNewHost, isSeatPresent } from './host.js';
 import { ROOM_ERR, RoomError, isPermissionDenied } from './errors.js';
-import { LOBBY_STATUS, SEAT_IDS, paths } from './schema.js';
+import { LOBBY_STATUS, SEAT_IDS, nameKey, paths } from './schema.js';
 
 const LEAVE_ATTEMPTS = 3;
 
@@ -51,6 +52,7 @@ export function createLeaveFunction(ctx) {
       [paths.claim(roomCode, seatId)]: null,
       [paths.presenceSeat(roomCode, seatId)]: null,
       [paths.member(roomCode, uid)]: null,
+      [paths.name(roomCode, nameKey(seats[seatId].name))]: null,
     };
     // Old devices of this seat (after a recovery) keep a stale entry pointing here.
     const members = (await read(paths.members(roomCode))) ?? {};

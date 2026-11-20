@@ -8,6 +8,7 @@ import {
   SIGNED_IN,
   all,
   anyOf,
+  deletedByKick,
   deletedWithOwnSeat,
   either,
   isMember,
@@ -21,6 +22,10 @@ const uidAfter = (seat) => `${NEW_ROOM_FROM_DEPTH_2}.child('seats').child(${seat
 // Leaving: delete your own entry, and stale entries of old devices that still point to the
 // seat you are leaving (deletedWithOwnSeat checks that the entry's seat is yours and goes too).
 const LEAVE = all('data.exists()', 'data.isString()', deletedWithOwnSeat('data.val()', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`));
+
+// Kicking: the host deletes every entry (the current device's and stale ones) that points to the
+// seat being kicked (deletedByKick checks that the seat goes in the same write).
+const KICK = all('data.exists()', 'data.isString()', deletedByKick('data.val()', `${NEW_ROOM_FROM_DEPTH_2}.child('seats')`));
 
 // Your own entry is stale when its seat now has another uid (recovered on another device).
 const DELETE_OWN_STALE = all('!newData.exists()', 'data.exists()', `${uidBefore('data.val()')} !== auth.uid`);
@@ -40,7 +45,7 @@ export function membersRules() {
     '.read': all(SIGNED_IN, isMember(ROOM_BEFORE)),
     $uid: {
       '.read': 'auth != null && auth.uid === $uid',
-      '.write': all(SIGNED_IN, CODE_OK, anyOf(LEAVE, all('auth.uid === $uid', anyOf(DELETE_OWN_STALE, SET_OWN)))),
+      '.write': all(SIGNED_IN, CODE_OK, anyOf(LEAVE, KICK, all('auth.uid === $uid', anyOf(DELETE_OWN_STALE, SET_OWN)))),
       '.validate': all('newData.isString()', isSeatId('newData.val()')),
     },
   };
