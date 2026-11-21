@@ -1,14 +1,17 @@
-# Mosul Roulette Game
+# Son Çay
 
-An online multiplayer elimination game for 3 to 15 players, each on their own device. A roulette
+**Son Çay** ("the last tea") is an online multiplayer elimination game for 3 to 15 players, each on their own device. A roulette
 holds live and blank chambers in a hidden order; players take turns shooting, and use tools that
 reveal, protect or deceive. The last player alive wins. There are two modes: **Classic** (tools are
 dealt at random) and **Custom** (Classic plus private information, coins and a shop, and
 predictions for eliminated players). Session points add up across the matches played in a room.
 
+The game is in Turkish. It is still in development and runs only against the local Firebase
+emulators for now.
+
 **Tech stack:** plain JavaScript ES modules with no build step and no runtime dependencies; a pure,
 deterministic rules engine; Firebase Realtime Database with security rules, tested on the local
-Firebase Emulator Suite.
+Firebase Emulator Suite; a plain HTML/CSS/JS interface (`index.html`, `src/ui/`).
 
 ## Run locally
 
@@ -22,8 +25,9 @@ npm run emulators   # first terminal: Auth and Realtime Database emulators
 npm run dev         # second terminal: static server on http://localhost:8080
 ```
 
-Then open `http://localhost:8080/dev/rooms.html` in several browser tabs: each tab is its own
-player. `http://localhost:8080/dev/` is a hot-seat page for the rules engine alone.
+Then open `http://localhost:8080/` in several browser tabs: each tab is its own player. Developer
+pages: `http://localhost:8080/dev/rooms.html` (room and match test page) and
+`http://localhost:8080/dev/` (a hot-seat page for the rules engine alone).
 
 ## Tests
 

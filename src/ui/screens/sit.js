@@ -104,7 +104,7 @@ export function sitScreen(ctx, view, { summary } = {}) {
     if (summary.status === 'playing') {
       body.append(h('div', { class: 'notice', role: 'note' },
         icon('info'),
-        h('span', { text: 'Şu an bir oyun sürüyor. Oturursan izlersin, sonraki oyuna otomatik katılırsın.' })));
+        h('span', { text: 'Şu an bir maç sürüyor. Oturursan izlersin, sonraki maça otomatik katılırsın.' })));
     }
   }
   body.append(name.el, pin.el);

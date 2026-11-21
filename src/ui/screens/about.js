@@ -37,7 +37,7 @@ export function aboutScreen(ctx) {
           h('span', { class: 'contact-value', text: c.value })))),
       h('section', { class: 'about-section' },
         h('h2', { class: 'section-title', text: 'Gizlilik' }),
-        h('p', { class: 'muted small', text: 'Hesap gerekmez. Her cihaz arka planda anonim bir kimlik alır. Yalnızca oyunun ihtiyaç duyduğu bilgiler saklanır: masa kodu, oyuncu adları, oyundaki hamleler ve puanlar, bir de kişisel veri içermeyen kullanım sayıları (ziyaret, masa ve oyun sayısı). Şifreleri kimse göremez.' })),
+        h('p', { class: 'muted small', text: 'Hesap gerekmez. Her cihaz arka planda anonim bir kimlik alır. Yalnızca oyunun ihtiyaç duyduğu bilgiler saklanır: masa kodu, oyuncu adları, maçlardaki hamleler ve puanlar. Şifren diğer oyunculara hiçbir zaman gösterilmez.' })),
       h('div', { class: 'card' },
         h('span', { class: 'strong', text: '© 2026 Malik Fikret. Tüm hakları saklıdır.' }),
         h('span', { class: 'muted small', text: "Bu uygulamanın kodu, tasarımı ve metinleri Malik Fikret'e aittir. İzinsiz kopyalanamaz, değiştirilemez ve başka bir yerde yayımlanamaz." }))));

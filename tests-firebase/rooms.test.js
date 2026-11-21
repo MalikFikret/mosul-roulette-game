@@ -266,7 +266,8 @@ describe('rules: creating a room', () => {
     await assertFails(rt.userDb('alice').ref(`rooms/${CODE}`).update(whole));
   });
 
-  test('an existing room cannot be created again, and meta or settings cannot change afterwards', async () => {
+  // The host may replace the settings between matches (settings.test.js); others never can.
+  test('an existing room cannot be created again, meta cannot change and settings only by the host', async () => {
     await seedRoom(['bob']);
     await assertFails(write(rt.userDb('carol'), creationUpdate('carol')));
     await assertFails(write(rt.userDb('host'), creationUpdate('host')));
@@ -274,8 +275,9 @@ describe('rules: creating a room', () => {
     await assertFails(host.ref(`rooms/${CODE}/meta/visibility`).set('public'));
     await assertFails(host.ref(`rooms/${CODE}/meta`).update({ status: 'lobby' }));
     await assertFails(host.ref(`rooms/${CODE}/meta`).remove());
-    await assertFails(host.ref(`rooms/${CODE}/settings/hp`).set(3));
-    await assertFails(host.ref(`rooms/${CODE}/settings`).set(toDbValue(defaultConfig('classic'))));
+    await assertFails(rt.userDb('bob').ref(`rooms/${CODE}/settings/hp`).set(3));
+    await assertFails(rt.userDb('bob').ref(`rooms/${CODE}/settings`).set(toDbValue(defaultConfig('classic'))));
+    await assertFails(host.ref(`rooms/${CODE}/settings`).remove());
     await assertFails(rt.userDb('bob').ref(`rooms/${CODE}/meta/hostSeat`).set('s02'));
   });
 });

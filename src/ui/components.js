@@ -15,6 +15,24 @@ export const ICONS = Object.freeze({
   info: ['svg', { width: 18, height: 18, viewBox: '0 0 18 18', 'aria-hidden': 'true', class: 'notice-icon' },
     ['circle', { cx: 9, cy: 9, r: 7.5, fill: 'none', stroke: '#3FB5AC', 'stroke-width': 1.5 }],
     ['path', { d: 'M9 8 V13 M9 5 V5.5', stroke: '#3FB5AC', 'stroke-width': 1.8, 'stroke-linecap': 'round' }]],
+  table: ['svg', { width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': 'true' },
+    ['rect', { x: 1.5, y: 2, width: 13, height: 12, rx: 2, fill: 'none', stroke: '#3FB5AC', 'stroke-width': 1.5 }],
+    ['path', { d: 'M1.5 6 H14.5 M1.5 10 H14.5 M6 6 V14', stroke: '#3FB5AC', 'stroke-width': 1.5 }]],
+  link: ['svg', { width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': 'true' },
+    ['path', { d: 'M6.5 9.5 L9.5 6.5 M7 4.5 L8.5 3 C9.9 1.6 12.1 1.6 13.5 3 C14.9 4.4 14.9 6.6 13.5 8 L12 9.5 M9 11.5 L7.5 13 C6.1 14.4 3.9 14.4 2.5 13 C1.1 11.6 1.1 9.4 2.5 8 L4 6.5', fill: 'none', stroke: '#15100C', 'stroke-width': 1.6, 'stroke-linecap': 'round' }]],
+  dots: ['svg', { width: 18, height: 18, viewBox: '0 0 18 18', 'aria-hidden': 'true' },
+    ['circle', { cx: 4, cy: 9, r: 1.6, fill: '#EFE6D6' }],
+    ['circle', { cx: 9, cy: 9, r: 1.6, fill: '#EFE6D6' }],
+    ['circle', { cx: 14, cy: 9, r: 1.6, fill: '#EFE6D6' }]],
+  minus: ['svg', { width: 14, height: 14, viewBox: '0 0 14 14', 'aria-hidden': 'true' },
+    ['path', { d: 'M2 7 H12', stroke: '#EFE6D6', 'stroke-width': 1.8, 'stroke-linecap': 'round' }]],
+  plus: ['svg', { width: 14, height: 14, viewBox: '0 0 14 14', 'aria-hidden': 'true' },
+    ['path', { d: 'M2 7 H12 M7 2 V12', stroke: '#EFE6D6', 'stroke-width': 1.8, 'stroke-linecap': 'round' }]],
+  chevron: ['svg', { width: 14, height: 14, viewBox: '0 0 14 14', 'aria-hidden': 'true', class: 'chevron' },
+    ['path', { d: 'M5 2 L10 7 L5 12', fill: 'none', stroke: '#B8AD9C', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }]],
+  clock: ['svg', { width: 18, height: 18, viewBox: '0 0 18 18', 'aria-hidden': 'true' },
+    ['circle', { cx: 9, cy: 9, r: 7.5, fill: 'none', stroke: '#B8AD9C', 'stroke-width': 1.5 }],
+    ['path', { d: 'M9 4.5 V9 L12 11', fill: 'none', stroke: '#B8AD9C', 'stroke-width': 1.5, 'stroke-linecap': 'round' }]],
   glass: ['svg', { role: 'img', 'aria-label': 'Çay bardağı', width: 70, height: 104, viewBox: '0 0 70 104' },
     ['ellipse', { cx: 35, cy: 98, rx: 30, ry: 5, fill: 'none', stroke: '#2F8F88', 'stroke-width': 2 }],
     ['path', { d: 'M6 6 H64 L50 44 L58 94 H12 L20 44 Z', fill: 'none', stroke: '#EFE6D6', 'stroke-opacity': 0.8, 'stroke-width': 2.5, 'stroke-linejoin': 'round' }],
@@ -113,6 +131,30 @@ export async function whileBusy(button, busyText, task) {
 /** A short centered "loading" placeholder for screens that read before they can draw. */
 export function loading(text = 'Yükleniyor…') {
   return h('p', { class: 'loading', role: 'status', text });
+}
+
+/**
+ * Copies text to the clipboard: the Clipboard API, else the older copy command on a hidden,
+ * temporary text field. Never throws.
+ * @returns {Promise<boolean>} true if copied
+ */
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const field = h('textarea', { class: 'offscreen', readonly: true, 'aria-hidden': 'true', tabindex: '-1' });
+    field.value = text;
+    document.body.append(field);
+    try {
+      field.select();
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      field.remove();
+    }
+  }
 }
 
 export const MODE_LABELS = Object.freeze({ classic: 'Klasik', custom: 'Özel' });

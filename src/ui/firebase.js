@@ -17,6 +17,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
 import {
   connectDatabaseEmulator,
+  forceWebSockets,
   get,
   getDatabase,
   onDisconnect,
@@ -66,6 +67,10 @@ const FIREBASE_CONFIG = {
  * @returns {Promise<{ api: ReturnType<typeof createRoomApi>, uid: string }>}
  */
 export async function connect() {
+  // WebSocket only: after one failed WebSocket the SDK would otherwise fall back to
+  // long-polling, which loads <script> tags from the database host, and the CSP (script-src
+  // 'self' + gstatic) blocks those. The SDK keeps retrying the WebSocket instead.
+  forceWebSockets();
   const app = initializeApp(FIREBASE_CONFIG);
   const auth = initializeAuth(app, { persistence: AUTH_PERSISTENCE });
   connectAuthEmulator(auth, `http://${EMULATOR_HOST}:${AUTH_EMULATOR_PORT}`, { disableWarnings: true });

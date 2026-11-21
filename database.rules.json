@@ -30,7 +30,7 @@
         },
         "settings": {
           ".read": "auth != null && root.child('rooms').child($code).child('members').child(auth.uid).exists() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('members').child(auth.uid).val()).child('uid').val() === auth.uid",
-          ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && !root.child('rooms').child($code).exists() && newData.parent().child('meta').exists() && newData.parent().child('members').child(auth.uid).val() === 's01' && newData.parent().child('meta/status').val() === 'lobby'",
+          ".write": "auth != null && $code.matches(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/) && ((!root.child('rooms').child($code).exists() && newData.parent().child('meta').exists() && newData.parent().child('members').child(auth.uid).val() === 's01') || (newData.exists() && root.child('rooms').child($code).child('members').child(auth.uid).val() === root.child('rooms').child($code).child('meta/hostSeat').val() && root.child('rooms').child($code).child('seats').child(root.child('rooms').child($code).child('meta/hostSeat').val()).child('uid').val() === auth.uid && root.child('rooms').child($code).child('meta/status').val() === 'lobby')) && newData.parent().child('meta/status').val() === 'lobby'",
           ".validate": "newData.hasChildren(['mode', 'hp', 'toolsPerReload', 'toolsPerTurn', 'shotTimeSeconds', 'enabledTools', 'randomizeSeats']) && newData.hasChild('custom') === (newData.child('mode').val() === 'custom')",
           "mode": {
             ".validate": "newData.val() === newData.parent().parent().child('meta/mode').val()"

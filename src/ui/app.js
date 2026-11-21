@@ -14,7 +14,7 @@ import { aboutScreen } from './screens/about.js';
 import { homeScreen } from './screens/home.js';
 import { problemScreen } from './screens/problem.js';
 import { recoverScreen } from './screens/recover.js';
-import { seatedScreen } from './screens/seated.js';
+import { lobbyScreen } from './screens/lobby.js';
 import { sitScreen } from './screens/sit.js';
 import { ROOM_ERR } from '../rooms/index.js';
 
@@ -40,9 +40,23 @@ const ctx = {
     rememberCode(code);
     ctx.go(hashFor.table(code));
   },
+  /** Back to Giriş, with an optional message there. */
+  goHome(message) {
+    goHome(message);
+  },
+  /** This tab no longer holds a seat at its remembered table. */
+  forgetTable() {
+    forgetCode();
+  },
+  /** Draws the current route again, with an optional message on the screen it shows. */
+  refresh(message) {
+    flash = message ?? null;
+    route();
+  },
 };
 
-// A message to show once on the next home screen (e.g. after a broken invite link).
+// A message to show once on the next home or waiting-room screen (e.g. after a broken invite
+// link, or a seat lost to another device).
 let flash = null;
 
 // Each rendered screen gets a view: `active()` turns false as soon as another screen replaces
@@ -93,7 +107,9 @@ async function showTable(view, code) {
     if (!view.active()) return;
     if (mine !== null) {
       rememberCode(code);
-      show(seatedScreen(ctx, view, { code, mine }), 'masa');
+      const message = flash;
+      flash = null;
+      show(lobbyScreen(ctx, view, { code, mine, message }), 'bekleme salonu');
       return;
     }
     if (rememberedCode() === code) forgetCode();

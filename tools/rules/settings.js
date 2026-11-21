@@ -1,8 +1,22 @@
-// rooms/$code/settings: the engine's default config for the room's mode, stored without null
-// fields. Readable by members; written only at creation, by the creator (seat s01). Keys and
-// types are checked here; value ranges are checked by the engine (validateConfig).
+// rooms/$code/settings: the match config of the room (the engine's config), stored without null
+// fields. Readable by members. Written at creation by the creator (seat s01), and afterwards
+// replaced by the CURRENT host (the valid member on meta.hostSeat) between matches only. Keys
+// and types are checked here; value ranges are checked by the engine (validateConfig, in
+// updateSettings and again in startMatch). The mode always equals meta.mode.
 
-import { BOOLEAN, CODE_OK, NUMBER, REFUSE, ROOM_BEFORE, SIGNED_IN, all, isMember } from './helpers.js';
+import {
+  BOOLEAN,
+  CODE_OK,
+  IN_LOBBY,
+  IS_HOST,
+  NUMBER,
+  REFUSE,
+  ROOM_BEFORE,
+  SIGNED_IN,
+  all,
+  anyOf,
+  isMember,
+} from './helpers.js';
 
 const ALL_TOOLS = '/^(detector|probe|counter|skip|swap|flip|shuffle|double|reverse|link|jail|handSwap|steal|shotShield|toolShield|heal)$/';
 // Tools sold in the Custom shop (every tool except swap).
@@ -14,9 +28,17 @@ export function settingsRules() {
     '.write': all(
       SIGNED_IN,
       CODE_OK,
-      `!${ROOM_BEFORE}.exists()`,
-      "newData.parent().child('meta').exists()",
-      "newData.parent().child('members').child(auth.uid).val() === 's01'",
+      anyOf(
+        // Creation: together with the room, by its creator (seat s01).
+        all(
+          `!${ROOM_BEFORE}.exists()`,
+          "newData.parent().child('meta').exists()",
+          "newData.parent().child('members').child(auth.uid).val() === 's01'",
+        ),
+        // Update: the current host, while no match runs (before and after the write), never
+        // deleting the settings (a whole-room deletion uses the rooms/$code grant instead).
+        all('newData.exists()', IS_HOST, IN_LOBBY),
+      ),
       // Settings change only between matches.
       "newData.parent().child('meta/status').val() === 'lobby'",
     ),
