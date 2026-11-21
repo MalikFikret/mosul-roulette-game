@@ -63,7 +63,7 @@ const DEFAULT_MAX_CODE_ATTEMPTS = 10;
 
 /**
  * Creates the room API bound to one database instance. The original five deps are enough for
- * createRoom, joinRoom, listSeatNames, recoverSeat, leaveRoom, renameSeat and kickSeat; presence and host functions also need
+ * createRoom, joinRoom, listSeatNames, getRoomSummary, getMySeat, recoverSeat, leaveRoom, renameSeat and kickSeat; presence and host functions also need
  * onValue (and onDisconnect for startPresence) and throw INVALID_DEPENDENCIES without them.
  * @param {RoomApiDeps} deps
  */
@@ -285,12 +285,63 @@ export function createRoomApi(deps) {
     requireUid(uid);
     const roomCode = requireCode(code);
     await requireRoom(roomCode);
+    return seatNamesOf(roomCode);
+  }
+
+  async function seatNamesOf(roomCode) {
     const names = await Promise.all(SEAT_IDS.map((seatId) => read(paths.seatName(roomCode, seatId))));
     const seats = [];
     SEAT_IDS.forEach((seatId, i) => {
       if (typeof names[i] === 'string') seats.push({ seatId, name: names[i] });
     });
     return seats;
+  }
+
+  /**
+   * What any signed-in visitor may see of a room before sitting down: its mode, whether a
+   * match is running, the host seat and the seated names (no uids). Reads only meta and
+   * seats/{seatId}/name, which every signed-in user can read.
+   * @param {{ uid: string, code: string }} input
+   * @returns {Promise<{ code: string, mode: string, status: string, hostSeat: string,
+   *   seats: Array<{ seatId: string, name: string }> }>}
+   * @throws {RoomError} INVALID_UID, INVALID_CODE, ROOM_NOT_FOUND
+   */
+  async function getRoomSummary({ uid, code } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    const meta = await read(paths.meta(roomCode));
+    if (meta === null) throw new RoomError(ROOM_ERR.ROOM_NOT_FOUND, `no room with code ${roomCode}`);
+    const seats = await seatNamesOf(roomCode);
+    return { code: roomCode, mode: meta.mode, status: meta.status, hostSeat: meta.hostSeat, seats };
+  }
+
+  /**
+   * The seat this user really holds in the room, or null when they hold none: no room with this
+   * code (any more), no members entry, or a stale one (the seat was recovered on another device
+   * or kicked). Used when a page is reloaded to decide whether to go back to the table.
+   * @param {{ uid: string, code: string }} input
+   * @returns {Promise<{ seatId: string, name: string, waiting: boolean, status: string,
+   *   hostSeat: string } | null>}  waiting: the seat was taken during a match and plays from
+   *   the next one
+   * @throws {RoomError} INVALID_UID, INVALID_CODE
+   */
+  async function getMySeat({ uid, code } = {}) {
+    requireUid(uid);
+    const roomCode = requireCode(code);
+    const meta = await read(paths.meta(roomCode));
+    if (meta === null) return null;
+    const seatId = await currentSeat(roomCode, uid);
+    if (seatId === null) return null;
+    let seat;
+    try {
+      seat = await read(paths.seat(roomCode, seatId));
+    } catch (error) {
+      // The seat was lost between the two reads.
+      if (isPermissionDenied(error)) return null;
+      throw error;
+    }
+    if (seat === null || seat.uid !== uid) return null;
+    return { seatId, name: seat.name, waiting: seat.waiting === true, status: meta.status, hostSeat: meta.hostSeat };
   }
 
   /**
@@ -409,6 +460,8 @@ export function createRoomApi(deps) {
     createRoom,
     joinRoom,
     listSeatNames,
+    getRoomSummary,
+    getMySeat,
     recoverSeat,
     ...presenceFunctions,
     leaveRoom,

@@ -1,8 +1,10 @@
-// Dev-only static file server (zero dependencies), so dev/index.html can load
-// the engine as ES modules. Not part of the game.
+// Dev-only static file server (zero dependencies), so the pages can load the code as ES
+// modules. Not part of the game (GitHub Pages serves the same files in production).
 //
 // Usage (from the project root):  node dev/serve.js [port]
-// Then open:                      http://localhost:8080/dev/
+// Then open:                      http://localhost:8080/          the game (index.html)
+//                                 http://localhost:8080/dev/      engine hot-seat page
+//                                 http://localhost:8080/dev/rooms.html   rooms test page
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -18,15 +20,12 @@ const TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.md': 'text/plain; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
 };
 
 const server = createServer(async (req, res) => {
   try {
     const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-    if (urlPath === '/') {
-      res.writeHead(302, { Location: '/dev/' }).end();
-      return;
-    }
     let filePath = normalize(join(root, urlPath));
     // Never serve anything outside the project folder.
     if (filePath !== root && !filePath.startsWith(root + sep)) {
@@ -52,5 +51,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, '127.0.0.1', () => {
-  console.log(`Dev page: http://localhost:${port}/dev/`);
+  console.log(`Game: http://localhost:${port}/  -  dev pages: http://localhost:${port}/dev/ and /dev/rooms.html`);
 });
